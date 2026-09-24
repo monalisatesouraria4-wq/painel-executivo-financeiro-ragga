@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/*
+ * Identidade visual Ragga — Painel Executivo Financeiro.
+ * Cores conforme planejamento técnico aprovado (docs/regras-negocio.md).
+ */
+:root {
+  --background: #edf1f8;
+  --foreground: #1f2937;
+  --surface: #ffffff;
+
+  --ragga-blue: #2b4899;
+  --ragga-blue-dark: #1f3570;
+  --ragga-bg: #edf1f8;
+  --ragga-surface: #ffffff;
+
+  /* Semáforos objetivos (parametrizados no banco; tokens visuais fixos) */
+  --semaforo-azul: #2b7de9;
+  --semaforo-verde: #1f9d55;
+  --semaforo-amarelo: #d4a017;
+  --semaforo-vermelho: #c53030;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+
+  --color-ragga-blue: var(--ragga-blue);
+  --color-ragga-blue-dark: var(--ragga-blue-dark);
+  --color-ragga-bg: var(--ragga-bg);
+  --color-ragga-surface: var(--ragga-surface);
+
+  --color-semaforo-azul: var(--semaforo-azul);
+  --color-semaforo-verde: var(--semaforo-verde);
+  --color-semaforo-amarelo: var(--semaforo-amarelo);
+  --color-semaforo-vermelho: var(--semaforo-vermelho);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
