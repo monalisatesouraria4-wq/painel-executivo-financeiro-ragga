@@ -88,18 +88,28 @@ npm run test:e2e
 
 ### Banco de dados (Supabase)
 
-Ainda não há schema criado (Etapa 2). Quando existir:
+Schema definido em `apps/web/lib/db/schema/*.ts`, com migration gerada em
+`supabase/migrations/` (`0000_schema_inicial.sql` + `0001_rls.sql`) e seed
+em `supabase/seed/`. **Nada disso foi aplicado em um banco real ainda** —
+nenhum projeto Supabase está conectado.
+
+Quando houver um projeto Supabase para conectar:
 
 1. Copiar `apps/web/.env.example` para `apps/web/.env.local` e preencher
-   com as credenciais do projeto Supabase.
-2. `npm run db:generate` (gera migration a partir do schema Drizzle).
-3. `npm run db:migrate` (aplica migrations).
+   com as credenciais do projeto Supabase (`DATABASE_URL`, etc.).
+2. Aplicar as migrations em `supabase/migrations/` (via `npm run db:migrate`
+   ou pela CLI/dashboard do Supabase).
+3. Rodar os scripts de `supabase/seed/` (17 unidades + parâmetros de
+   semáforo aprovados).
+4. Alterações futuras ao schema: editar `apps/web/lib/db/schema/*.ts` e
+   rodar `npm run db:generate` para gerar a próxima migration.
 
 ## Estado do projeto / próximas etapas
 
-1. ✅ **Etapa 1 — Fundação** (este momento).
-2. ⏳ Etapa 2 — Schema do banco (tabelas de fato, dimensão, `fontes_por_periodo`,
-   perfis/usuários, RLS).
+1. ✅ **Etapa 1 — Fundação.**
+2. ✅ **Etapa 2 — Schema do banco** (tabelas de fato, dimensão,
+   `fontes_por_periodo`, perfis/usuários, RLS, seed). Schema definido e
+   migration gerada, **ainda não aplicada em nenhum banco real** (este momento).
 3. ⏳ Etapa 3 — Motor de importação (parsers, `resolverAba`, upsert/delete+insert).
 4. ⏳ Etapa 4 em diante — telas (Visão Geral, Comparativo, Indicadores,
    Controles de Caixa, Análise Gerencial, Plano de Ação, Fechamentos),

@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import * as schema from "./schema";
 
 /**
  * Cliente de banco (Drizzle + postgres-js) para uso em server-side
@@ -16,7 +17,7 @@ function criarClienteDb() {
     );
   }
   const client = postgres(connectionString, { prepare: false });
-  return drizzle(client);
+  return drizzle(client, { schema });
 }
 
 let dbSingleton: ReturnType<typeof criarClienteDb> | null = null;

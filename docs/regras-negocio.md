@@ -9,6 +9,11 @@
 BG 01, BG 02, BG 03, BG 04, BG 05, BG 06, BG 07, BG 08 E 09, BG 10, BG 11,
 BG 12, BG 13, IS 01, IS 02, IS 03, ROBS, MAPOLI.
 
+**Confirmado com dados reais (Etapa 2):** BG 08 E 09 é uma única unidade —
+não existe BG 09 separado. Não existem BG 14 a BG 18 (aparecem apenas em
+listas antigas). O seed em `supabase/seed/0001_unidades.sql` cadastra
+exatamente estas 17.
+
 Fonte única no código: `packages/shared/unidades.ts`.
 
 ## Regras de Data
@@ -29,13 +34,16 @@ Implementado em `apps/web/lib/rules/datas.ts`.
 ## Regras Importantes por Base
 
 - **Fechamento de Caixa:** não deduplicar. Uma loja pode ter mais de uma
-  movimentação. Chave (validação/auditoria, não dedup): filial + data + caixa + movimento.
+  movimentação. Chave de referência (validação/auditoria, não dedup):
+  filial + data + movimento. **Confirmado com dados reais (Etapa 2):**
+  não usar "caixa" na chave — filial + data + caixa causava perda de
+  registros legítimos.
 - **Brindes:** chave: filial + data + motivo + motivo2.
 - **Faturamento:** chave: filial + data.
 - **Compra Direta:** chave: filial + data + motivo.
 - **Cancelamento Salão:** chave: filial + data + motivo.
 - **Cancelamento Delivery:** chave: filial + data + motivo.
-- **PDV × Maquininha:** chave: filial + data + forma_pag.
+- **PDV × Maquininha:** chave: filial + data + forma_pagamento.
 - **Formas de pagamento:** chave: filial + data + forma.
 - **Conferência:** chave: filial + data + tipo.
 - **Retirada Depósito:** NÃO deduplicar. Cada lançamento é um registro.
@@ -162,6 +170,37 @@ a migração. Nenhuma tela nova é considerada pronta até bater com o painel
 atual, nos mesmos dados/período. Nenhuma regra existente é descartada sem
 validação explícita — divergência é tratada como bug a investigar.
 
+## Schema do Banco (Etapa 2)
+
+Implementado em `apps/web/lib/db/schema/*.ts` (Drizzle ORM), migration
+gerada em `supabase/migrations/0000_schema_inicial.sql` (19 tabelas) e
+`supabase/migrations/0001_rls.sql` (Row Level Security). **Nenhuma
+migration foi aplicada em banco real** — não há projeto Supabase
+conectado ainda (`DATABASE_URL` não configurada). Seed em
+`supabase/seed/` (17 unidades + parâmetros de semáforo aprovados).
+
+Estrutura: dimensão (`unidades`, `usuarios`, `usuario_unidade`),
+auditoria/importação (`fontes_por_periodo`, `importacoes`), 8 tabelas de
+fato com chave única (`faturamento`, `brindes`, `cancelamento_salao`,
+`cancelamento_delivery`, `compra_direta`, `pdv_maquininha`,
+`formas_pagamento`, `conferencia`), 4 tabelas de fato sem dedup
+(`fechamento_caixa`, `retirada_deposito`, `troco`, `quebra_caixa`) e
+gestão (`parametros_semaforo`, `tratativas`).
+
+`conferencia` e `quebra_caixa` têm `fonte_periodo_id` referenciando
+`fontes_por_periodo`, que guarda `tipo_base` + `arquivo_nome` + `nome_aba`
++ `periodo_inicio` + `periodo_fim` — cada uma das duas bases cadastra suas
+próprias abas, nunca compartilhadas (planejamento v2, itens 1 e 2).
+
+RLS habilitado em todas as tabelas desde a fundação. Perfis `admin` e
+`financeiro_master` têm acesso total; demais perfis (ainda não usados)
+seriam restritos por `usuario_unidade`. **Policies de escrita
+(INSERT/UPDATE/DELETE) não foram criadas nesta etapa** — a
+importação/gravação é feita pelo backend com a service role key, que
+ignora RLS. Policies de escrita para o Plano de Ação (usuários
+autenticados criando/editando tratativas) ficam para quando essa tela for
+implementada.
+
 ## Pendências de Validação (não são decisões tomadas, apenas registradas)
 
 - `conferenciaStatus.ts` contém uma ordem de precedência entre os status
@@ -170,3 +209,14 @@ validação explícita — divergência é tratada como bug a investigar.
   dos testes. **Esta ordem de precedência ainda não foi validada
   explicitamente** e deve ser confirmada antes de ser usada com dados
   reais (Etapa 3).
+- `tratativas.status` não tem um conjunto fechado de valores definido no
+  planejamento (apenas "status" foi mencionado). O schema deixa o campo
+  como texto livre com default `'aberto'`, sem `CHECK` de valores válidos,
+  até que os status do Plano de Ação sejam definidos explicitamente.
+- Precisão numérica: todos os valores monetários foram definidos como
+  `numeric(14,2)` (decisão técnica padrão, não uma regra de negócio
+  informada) — sinalizar se algum valor exigir mais casas decimais.
+- `parametros_semaforo`: a última faixa de cada indicador (">") é
+  representada com um teto alto (`999999.99`) em vez de "sem limite", por
+  ser mais simples de consultar; equivalente a `Infinity` usado em
+  `apps/web/lib/rules/semaforos.ts`.
