@@ -14,8 +14,13 @@ import { UNIDADES, type CodigoUnidade } from "@painel/shared";
  *
  * PENDÊNCIA (ver docs/regras-negocio.md): esta tabela de "BIGGS ..." NÃO
  * foi confirmada como exaustiva para as 17 unidades — não apareceram
- * "BIGGS 08/09", "IS 01/02/03", "ROBS" nem "MAPOLI" nesse arquivo
- * específico. Não adivinhei esses mapeamentos.
+ * "BIGGS 08/09", "IS 01/02/03" nem "ROBS" em nenhum arquivo inspecionado
+ * com essa nomenclatura. Não adivinhei esses mapeamentos.
+ *
+ * - "CASARIA" → MAPOLI: confirmado pelo usuário (investigação em 8 dos
+ *   38 arquivos reais do projeto, incluindo a string literal
+ *   "MAPOLI 01 - CASARIA" em 02_EXTRATOS_BANCARIOS.xlsx — ver
+ *   docs/regras-negocio.md, seção "Investigação: CASARIA → MAPOLI").
  */
 const MAPA_NOMES_ALTERNATIVOS: Record<string, CodigoUnidade> = {
   "BIGGS 01 - MARINGA": "BG 01",
@@ -29,6 +34,7 @@ const MAPA_NOMES_ALTERNATIVOS: Record<string, CodigoUnidade> = {
   "BIGGS 11 - SANTO AMARO": "BG 11",
   "BIGGS 12 - SAUL ELKIND": "BG 12",
   "BIGGS 13 - ARTHUR THOMAS": "BG 13",
+  CASARIA: "MAPOLI",
 };
 
 const CODIGOS_CANONICOS = new Set<string>(UNIDADES);

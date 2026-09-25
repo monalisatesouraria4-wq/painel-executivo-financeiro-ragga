@@ -315,10 +315,9 @@ origem), faturamento (nível de agregação da fonte).
   equivalente para BG 08 E 09, IS 01-03, ROBS e MAPOLI em nenhum arquivo
   inspecionado — a tabela de mapeamento **não é exaustiva** e precisa ser
   completada ou confirmada como suficiente.
-- **Nomenclatura de unidade "CASARIA" → MAPOLI:** achado no painel HTML
-  atual (`normalizeFilialJS`), **investigado nas bases reais mas AINDA
-  NÃO adicionado ao código** — ver seção "Investigação: CASARIA → MAPOLI"
-  abaixo.
+- **Nomenclatura de unidade "CASARIA" → MAPOLI: RESOLVIDA.** Confirmado
+  pelo usuário e adicionado a `apps/web/lib/import/normalizarUnidade.ts`
+  — ver seção "Investigação: CASARIA → MAPOLI" abaixo.
 
 ## Regras Confirmadas a partir do Painel Atual (HTML)
 
@@ -405,5 +404,6 @@ na aba `QUEBRA 16-08 A 15-09` do arquivo de Conferência/Quebra de Caixa
 dados recentes (ago/2026). Não sei se isso é uso inconsistente contínuo
 ou um caso isolado.
 
-**Não adicionei "CASARIA" ao mapeamento de normalização** — aguardando
-sua decisão explícita.
+**Confirmado pelo usuário.** Adicionado a
+`apps/web/lib/import/normalizarUnidade.ts` (`CASARIA` → `MAPOLI`), com
+teste em `apps/web/tests/unit/normalizarUnidade.test.ts`.

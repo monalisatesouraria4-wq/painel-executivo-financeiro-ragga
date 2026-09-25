@@ -20,6 +20,12 @@ describe("normalizarUnidade", () => {
     if (r.ok) expect(r.codigo).toBe("BG 13");
   });
 
+  it("mapeia 'CASARIA' para MAPOLI (confirmado pelo usuário)", () => {
+    const r = normalizarUnidade("CASARIA");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.codigo).toBe("MAPOLI");
+  });
+
   it("rejeita BG 09 isolado (não existe — é parte de BG 08 E 09)", () => {
     const r = normalizarUnidade("BG 09");
     expect(r.ok).toBe(false);
