@@ -203,6 +203,26 @@ ignora RLS. Policies de escrita para o Plano de Ação (usuários
 autenticados criando/editando tratativas) ficam para quando essa tela for
 implementada.
 
+## Motor de Importação (Etapa 3)
+
+Implementado em `apps/web/lib/import/`, rodando **apenas local/teste** —
+sem conexão com Supabase e sem carga definitiva. Arquitetura: detecção do
+tipo de base pela estrutura do cabeçalho (`detector.ts`, não pelo nome do
+arquivo), normalização de unidade (`normalizarUnidade.ts`, cobre BG 08 E 09
+como unidade única e a nomenclatura alternativa "BIGGS NN - Nome" vista em
+`RETIRADA DEPOSITO NOVO.xlsx`), parsers por base (`parsers/listaSimples.ts`
+genérico + `parsers/quebraCaixa.ts` específico), relatório de validação
+(`relatorio.ts`) e simulação de gravação (`simularGravacao.ts`, upsert por
+chave ou delete-do-período+insert, sem tocar banco real).
+
+**Bases com parser pronto e testado contra os arquivos reais:** brindes,
+cancelamento_salao, cancelamento_delivery, compra_direta, quebra_caixa.
+
+**Bases com pendência (parser NÃO finalizado — ver "Pendências" abaixo):**
+conferência, fechamento_caixa (contagem/soma), troco (qual valor gravar),
+retirada_deposito (arquivo de origem), pdv_maquininha (arquivo de
+origem), faturamento (nível de agregação da fonte).
+
 ## Pendências de Validação (não são decisões tomadas, apenas registradas)
 
 - `conferenciaStatus.ts` contém uma ordem de precedência entre os status
@@ -222,3 +242,67 @@ implementada.
   representada com um teto alto (`999999.99`) em vez de "sem limite", por
   ser mais simples de consultar; equivalente a `Infinity` usado em
   `apps/web/lib/rules/semaforos.ts`.
+
+### Pendências encontradas na Etapa 3 (motor de importação) — bloqueiam o parser final das bases abaixo
+
+- **Conferência — estrutura real diverge do planejamento.** O planejamento
+  descreve marcação por caixa (`0`/`X`/vazio). O arquivo real
+  (`CONTROLE DE CONFERENCIA E QUEBRAS DE CAIXA (5).xlsx`) não tem marcação
+  por caixa: cada aba de período tem uma linha por filial e uma coluna por
+  dia do período, com a **contagem de caixas conferidos naquele dia**
+  (mais colunas de "Qtd. caixas cadastrados"). É um modelo agregado
+  (filial+dia → contagem), não un modelo por caixa individual. Preciso que
+  você defina: o que o sistema deve gravar — a contagem diária por filial
+  como está no arquivo, ou existe uma fonte diferente com marcação por
+  caixa que ainda não foi mapeada?
+- **Conferência — abas sem ano no nome, e uma aba com nome inconsistente.**
+  As abas reais são: `16.08 a 15.09`, `16.09 a 15.10`, `16.10 a 15.11`,
+  `16.11 a 15.12`, `16.12 a 15.01`, e uma aba adicional chamada
+  **`16-10 A 15-09`** (nome fora do padrão/cronologicamente inconsistente
+  com as demais). Nenhum nome de aba traz o ANO — o resolvedor de aba
+  (`lib/rules/resolverAba.ts`) precisa de `periodo_inicio`/`periodo_fim`
+  como datas completas. Preciso de uma regra explícita de como inferir o
+  ano a partir do nome da aba (ou de outra informação do arquivo), e uma
+  decisão sobre a aba `16-10 A 15-09` (parece um erro de nomenclatura —
+  não vou tratá-la como válida sem confirmação).
+- **Fechamento de Caixa — arquivo real não tem valor monetário.** O
+  arquivo `FECHAMENTO DE CAIXA - ABERTOS_FECHADOS_CONCILIADOS.xlsx.xlsx`
+  tem: Data, Filial, Caixa, Movto., Abertura, Fechamento, Operador,
+  Situação, Dif. fech., Dif. conc., Dif. total — sem coluna de valor. O
+  schema atual (`fechamento_caixa.valor numeric NOT NULL`) não tem de
+  onde vir. Preciso de definição: o que esse valor representa e de qual
+  coluna real ele deveria vir (talvez as diferenças, talvez este não seja
+  o arquivo certo para "valor").
+- **Troco — arquivo real tem DOIS valores, schema só tem um.** O arquivo
+  `TROCO SEMANAL.xlsx` tem "R$ TROCO CONFERIDO PELO GERENTE" e "R$ TROCO
+  INFORMADO PELO COLABORADOR" (mais a diferença). O schema (`troco.valor`)
+  só grava um número. Preciso de decisão: gravar os dois valores (exige
+  alterar o schema), gravar só um deles (qual?), ou gravar a diferença.
+- **Retirada Depósito — três arquivos candidatos com estruturas
+  diferentes.** Encontrei `RETIRADA DEPOSITO.xlsx` (aba "coud": Filial,
+  Caixa, Data, Valor, Motivo/Descrição — nomes de filial já no padrão
+  canônico "BG NN"), `RETIRADA DEPOSITO NOVO.xlsx` (duas abas: "Planilha1"
+  com Loja/Data/Sistema/Banco/Diferença e "Planilha2" com a mesma
+  estrutura de "coud", mas usando nomes "BIGGS NN - Nome"), e
+  `Retirada Depósito.xlsx` (estrutura parecida com "coud", 56 linhas).
+  Não sei qual é a fonte oficial atual, nem se são períodos diferentes do
+  mesmo processo ou arquivos concorrentes/obsoletos.
+- **PDV × Maquininha — dois arquivos candidatos.**
+  `banco x maquina.xlsx` (Loja, Data, Forma de Pag., Sistema, Maquininha,
+  Diferença) e `PDV X Adquirente - Consolidado.xlsx` (Loja, Data, Forma de
+  Pag., Venda (PDV - Cloud), Total Maq. (Adquirente - Sicredi), Diferença)
+  têm a mesma forma, mas nomes de coluna diferentes para "sistema/PDV" e
+  "maquininha/adquirente". Preciso saber qual é a fonte oficial (ou se são
+  adquirentes diferentes que devem coexistir).
+- **Faturamento — fonte real é no nível de cupom, não de filial+data.** O
+  arquivo em `CONCILIAÇÃO/BG 01/FATURAMENTO - 1 SEMESTRE 2026.xlsx` é
+  transacional (uma linha por cupom/forma de pagamento), um arquivo por
+  loja. A base `faturamento` (chave filial+data) exigiria uma agregação
+  (soma por filial+data) que não foi confirmada como a regra correta —
+  não decidi isso sozinho.
+- **Nomenclatura de unidade "BIGGS NN - Nome":** confirmada em
+  `RETIRADA DEPOSITO NOVO.xlsx` para 11 unidades (ver
+  `apps/web/lib/import/normalizarUnidade.ts`). Não apareceu nomenclatura
+  equivalente para BG 08 E 09, IS 01-03, ROBS e MAPOLI em nenhum arquivo
+  inspecionado — a tabela de mapeamento **não é exaustiva** e precisa ser
+  completada ou confirmada como suficiente.
