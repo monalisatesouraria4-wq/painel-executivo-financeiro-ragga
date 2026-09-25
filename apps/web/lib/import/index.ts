@@ -7,3 +7,5 @@ export * from "./relatorio";
 export * from "./simularGravacao";
 export * from "./parsers/listaSimples";
 export * from "./parsers/quebraCaixa";
+export * from "./periodoAbaConferencia";
+export * from "./resolverAbaConferencia";

@@ -254,17 +254,30 @@ origem), faturamento (nível de agregação da fonte).
   (filial+dia → contagem), não un modelo por caixa individual. Preciso que
   você defina: o que o sistema deve gravar — a contagem diária por filial
   como está no arquivo, ou existe uma fonte diferente com marcação por
-  caixa que ainda não foi mapeada?
-- **Conferência — abas sem ano no nome, e uma aba com nome inconsistente.**
-  As abas reais são: `16.08 a 15.09`, `16.09 a 15.10`, `16.10 a 15.11`,
-  `16.11 a 15.12`, `16.12 a 15.01`, e uma aba adicional chamada
-  **`16-10 A 15-09`** (nome fora do padrão/cronologicamente inconsistente
-  com as demais). Nenhum nome de aba traz o ANO — o resolvedor de aba
-  (`lib/rules/resolverAba.ts`) precisa de `periodo_inicio`/`periodo_fim`
-  como datas completas. Preciso de uma regra explícita de como inferir o
-  ano a partir do nome da aba (ou de outra informação do arquivo), e uma
-  decisão sobre a aba `16-10 A 15-09` (parece um erro de nomenclatura —
-  não vou tratá-la como válida sem confirmação).
+  caixa que ainda não foi mapeada? **(ainda pendente — não faz parte da
+  resolução de aba abaixo, que já está pronta)**
+
+- **Conferência — resolução de aba por período: RESOLVIDA.** Implementada
+  em `apps/web/lib/import/periodoAbaConferencia.ts` +
+  `resolverAbaConferencia.ts`. O período de cada aba (com ano) é extraído
+  da própria planilha — a linha 6 de cada aba de Conferência tem uma
+  coluna por dia do período, com o valor sendo uma data completa do Excel
+  (ex.: aba "16.09 a 15.10" → linha 6 vai de `2026-09-16` a `2026-10-15`).
+  O nome da aba nunca é usado para decidir o período; ele só serve para
+  saber quais abas existem no arquivo. Uma aba só é aceita como válida
+  quando a linha 6 é uma sequência de datas reais, consecutivas dia a
+  dia — isso identifica corretamente a aba real `"16-10 A 15-09"` como
+  **inválida** (sua linha 6 tem a estrutura de Quebra de Caixa —
+  fórmula/texto, não datas — porque na prática essa aba é um resquício de
+  cópia mal nomeado), sem tentar corrigi-la ou adivinhar o que ela
+  deveria significar, conforme pedido.
+
+  **Achado nos dados reais:** existe um buraco de 1 dia entre as abas do
+  arquivo: a aba `"16.10 a 15.11"` termina em `2026-11-14` (não 15, como o
+  nome sugere) e a aba `"16.11 a 15.12"` começa em `2026-11-16` — o dia
+  `15/11/2026` não é coberto por nenhuma aba. O sistema retorna erro claro
+  para essa data (não inventa cobertura). Sinalizo para sua ciência; não
+  corrigi o arquivo nem o resolvedor para "tapar" esse buraco.
 - **Fechamento de Caixa — arquivo real não tem valor monetário.** O
   arquivo `FECHAMENTO DE CAIXA - ABERTOS_FECHADOS_CONCILIADOS.xlsx.xlsx`
   tem: Data, Filial, Caixa, Movto., Abertura, Fechamento, Operador,
