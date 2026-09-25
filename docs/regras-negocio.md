@@ -224,12 +224,57 @@ genérico + `parsers/quebraCaixa.ts` específico), relatório de validação
 chave ou delete-do-período+insert, sem tocar banco real).
 
 **Bases com parser pronto e testado contra os arquivos reais:** brindes,
-cancelamento_salao, cancelamento_delivery, compra_direta, quebra_caixa.
+cancelamento_salao, cancelamento_delivery, compra_direta, quebra_caixa,
+**faturamento**, **pdv_maquininha**, **retirada_deposito**.
 
 **Bases com pendência (parser NÃO finalizado — ver "Pendências" abaixo):**
-conferência, fechamento_caixa (contagem/soma), troco (qual valor gravar),
-retirada_deposito (arquivo de origem), pdv_maquininha (arquivo de
-origem), faturamento (nível de agregação da fonte).
+conferência, fechamento_caixa (contagem/soma), troco (qual valor gravar).
+
+### Faturamento, PDV × Maquininha e Retirada Depósito — parsers implementados
+
+Implementados em `apps/web/lib/import/parsers/faturamento.ts`,
+`pdvMaquininha.ts` e `retiradaDeposito.ts`, seguindo exatamente as regras
+já confirmadas a partir do painel HTML atual (ver seção "Regras
+Confirmadas a partir do Painel Atual"). Nenhuma regra nova foi criada.
+
+- **Faturamento:** agrega `SUM(Vl. pagamento)` por Filial+Data já no
+  parser (a granularidade bruta do arquivo é por cupom/forma de
+  pagamento — muito mais fina que a base `faturamento`). Sem exclusão de
+  cancelamento ou valores negativos (mesmo comportamento do painel
+  atual — pendência de saber se isso é correto continua registrada
+  abaixo).
+- **PDV × Maquininha:** lê a aba `Export` do arquivo oficial; ignora
+  linhas de totalizador (`"TOTAL"`); guarda PDV, Maquininha e Diferença
+  sem recalcular.
+- **Retirada Depósito:** reaproveita `parseListaSimples` (nova entrada
+  `retirada_deposito` em `CONFIGS_LISTA_SIMPLES`) e filtra depois só as
+  linhas com `Motivo = "DEPOSITO"` — as demais ficam nos "rejeitados" com
+  motivo explícito (ex. `Motivo = "SUPRIMENTO" — fora do escopo`), não
+  descartadas silenciosamente.
+
+O `detector.ts` ganhou a assinatura de `retirada_deposito` (exige
+`Motivo` E `Motivo/Descrição` como colunas separadas — só o arquivo
+oficial `Retirada Depósito.xlsx` bate; a aba "coud" e demais candidatos
+continuam retornando `null`, sem serem confundidos).
+
+**Dry-run contra os arquivos reais (sem gravar nada), item a validar:**
+
+| Base | Arquivo/aba | Lidos | Válidos | Rejeitados/excluídos | Soma | Período |
+|---|---|---|---|---|---|---|
+| Faturamento | `FATURAMENTO - 1 SEMESTRE 2026.xlsx` | 648.989 linhas brutas | 2.392 registros (filial+data) | 0 | R$ 32.308.466,70 | 01/02 a 30/06/2026 |
+| PDV × Maquininha | `PDV X Adquirente - Consolidado.xlsx` / Export | 1.306 | 1.306 | 0 | PDV R$ 2.482.663,93 / Maquininha R$ 2.473.602,78 / Dif. −R$ 9.061,15 | 01/09 a 20/09/2026 |
+| Retirada Depósito | `Retirada Depósito.xlsx` | 55 | 9 (Motivo=DEPOSITO) | 46 (outras classificações, ex. SUPRIMENTO/ERRO) | R$ 6.520,00 | 15/09 a 24/09/2026 |
+
+**Achado a sinalizar (não é uma decisão, é um número observado):** em
+PDV × Maquininha, das 1.306 linhas válidas, **973 colidem na chave
+filial+data+forma** (ou seja, muitas combinações filial+data+forma
+aparecem mais de uma vez no arquivo `Export`). Isso é mais do que o
+esperado para um relatório consolidado diário — pode ser normal (o
+arquivo talvez seja atualizado/reexportado acumulando períodos
+sobrepostos) ou pode indicar que o arquivo real tem múltiplas linhas por
+dia por algum motivo ainda não investigado. Não decidi nada sobre isso —
+com upsert por chave, a reimportação já trataria isso corretamente (fica
+só a última ocorrência por chave), mas o número alto merece sua atenção.
 
 ## Pendências de Validação (não são decisões tomadas, apenas registradas)
 

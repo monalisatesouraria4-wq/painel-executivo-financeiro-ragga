@@ -49,10 +49,18 @@ const ASSINATURAS: Assinatura[] = [
     colunas: [contem("FILIAL"), contem("ENTREGADOR"), contem("NR. PEDIDO"), igual("MOTIVO")],
   },
   {
-    // "igual" em MOTIVO e DESCRICAO separa de retirada_deposito (aba
-    // "coud"), que tem a coluna única "Motivo/Descrição".
+    // "igual" em MOTIVO e DESCRICAO separa de retirada_deposito, que tem
+    // a coluna "Motivo/Descrição" (combinada), não "Descrição" isolada.
     tipoBase: "compra_direta",
     colunas: [contem("FILIAL"), contem("CAIXA"), contem("DATA"), contem("VALOR"), igual("MOTIVO"), igual("DESCRICAO")],
+  },
+  {
+    // Fonte oficial confirmada: Retirada Depósito.xlsx — única variante
+    // com "Motivo" E "Motivo/Descrição" como colunas separadas (as
+    // outras abas/arquivos candidatos só têm "Motivo/Descrição", sem
+    // "Motivo" isolado, e por isso não batem nesta assinatura).
+    tipoBase: "retirada_deposito",
+    colunas: [contem("FILIAL"), contem("CAIXA"), contem("DATA"), contem("VALOR"), igual("MOTIVO"), contem("MOTIVO/DESCRICAO")],
   },
   {
     tipoBase: "troco",

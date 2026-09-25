@@ -56,6 +56,25 @@ export const CONFIGS_LISTA_SIMPLES: Record<string, ConfigListaSimples> = {
     colunaValor: "VALOR",
     camposExtras: [{ nome: "motivo", coluna: "MOTIVO", exata: true }],
   },
+  /**
+   * Retirada Depósito — fonte oficial confirmada: `Retirada Depósito.xlsx`
+   * (a única variante com "Motivo" e "Motivo/Descrição" como colunas
+   * separadas). O filtro "somente Motivo = DEPOSITO" é aplicado depois,
+   * em parseRetiradaDeposito — este config só descreve a leitura bruta.
+   */
+  retirada_deposito: {
+    tipoBase: "retirada_deposito",
+    colunaUnidade: "FILIAL",
+    colunaData: "DATA",
+    colunaValor: "VALOR",
+    camposExtras: [
+      { nome: "motivo", coluna: "MOTIVO", exata: true },
+      { nome: "motivoDescricao", coluna: "MOTIVO/DESCRICAO" },
+      { nome: "caixa", coluna: "CAIXA", exata: true },
+      { nome: "usuario", coluna: "USUARIO", exata: true },
+      { nome: "autorizador", coluna: "USUARIO AUTORIZADOR" },
+    ],
+  },
 };
 
 export function parseListaSimples(

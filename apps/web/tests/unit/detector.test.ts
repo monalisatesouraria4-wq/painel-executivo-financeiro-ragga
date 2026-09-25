@@ -54,11 +54,18 @@ describe("detectarTipoBase (por estrutura, não pelo nome do arquivo)", () => {
     expect(detectarTipoBase(header)).toBe("fechamento_caixa");
   });
 
-  it("NÃO confunde retirada_deposito (aba 'coud', Motivo/Descrição em uma célula só) com compra_direta", () => {
+  it("Retirada Depósito.xlsx (fonte oficial confirmada — Motivo E Motivo/Descrição separados)", () => {
+    const header = [
+      "Filial", "Caixa", "Data", "Valor", "Motivo", "Motivo/Descrição", "Usuário", "Usuário autorizador",
+    ];
+    expect(detectarTipoBase(header)).toBe("retirada_deposito");
+  });
+
+  it("NÃO confunde a aba 'coud' (só Motivo/Descrição, sem Motivo isolado) com compra_direta nem retirada_deposito", () => {
     const header = ["Filial", "Caixa", "Data", "Valor", "Motivo/Descrição", "Usuário", "Usuário autorizador"];
     expect(detectarTipoBase(header)).not.toBe("compra_direta");
-    // Nenhuma assinatura cobre retirada_deposito ainda (pendência —
-    // múltiplos arquivos/formatos candidatos, ver docs/regras-negocio.md).
+    // "coud" não é a fonte oficial de retirada_deposito (ver
+    // docs/regras-negocio.md) — sem "Motivo" isolado, não bate na assinatura.
     expect(detectarTipoBase(header)).toBeNull();
   });
 
