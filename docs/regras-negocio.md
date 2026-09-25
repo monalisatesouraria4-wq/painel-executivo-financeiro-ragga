@@ -293,38 +293,117 @@ origem), faturamento (nível de agregação da fonte).
   filial/data, ex. "DELIVERY NOTURNO" vs "SALÃO DIURNO") — isso não foi
   pedido explicitamente, sinalizo como adição consciente, não uma decisão
   de negócio nova. Parser ainda não implementado.
-- **Retirada Depósito — 4 arquivos, 7 abas relevantes, dois conceitos
-  misturados.** `RETIRADA DEPOSITO.xlsx` tem 7 abas: 5 são lançamentos de
-  retirada (`coud` 281 registros, `SUPRIMENTO` 64, `SANGRIA` 17,
-  `RETIRDA PARA SUPRIR` 29, `RETIRADA INCORRETA` 9 — todas com a mesma
-  estrutura `Filial, Caixa, Data, Valor, Motivo/Descrição, Usuário,
-  Usuário autorizador`), e 2 são reconciliação banco×sistema (`banco x
-  coud` 1.574 registros: `DATA, BANCO, COUD, DIFERENÇA, LOJA, REFERENTE`;
-  e `Justificativa` 37 registros). `RETIRADA DEPOSITO NOVO.xlsx` também
-  tem 2 abas: `Planilha1` (1.579 registros, mesmo formato de "banco x
-  coud" — reconciliação) e `Planilha2` (120 registros, mesmo formato de
-  "coud", mas unidades como "BIGGS NN - Nome"). `Retirada Depósito.xlsx`
-  (56 registros) também é formato "coud". Preciso de decisão: (a) unificar
-  as 5 abas de lançamento numa única base `retirada_deposito` usando o
-  nome da aba como `motivo`? (b) qual arquivo é a fonte oficial de
-  lançamentos hoje? (c) a reconciliação banco×sistema é uma base nova,
-  ainda não prevista no planejamento?
-- **PDV × Maquininha — dois arquivos candidatos.**
-  `banco x maquina.xlsx` (Loja, Data, Forma de Pag., Sistema, Maquininha,
-  Diferença) e `PDV X Adquirente - Consolidado.xlsx` (Loja, Data, Forma de
-  Pag., Venda (PDV - Cloud), Total Maq. (Adquirente - Sicredi), Diferença)
-  têm a mesma forma, mas nomes de coluna diferentes para "sistema/PDV" e
-  "maquininha/adquirente". Preciso saber qual é a fonte oficial (ou se são
-  adquirentes diferentes que devem coexistir).
-- **Faturamento — fonte real é no nível de cupom, não de filial+data.** O
-  arquivo em `CONCILIAÇÃO/BG 01/FATURAMENTO - 1 SEMESTRE 2026.xlsx` é
-  transacional (uma linha por cupom/forma de pagamento), um arquivo por
-  loja. A base `faturamento` (chave filial+data) exigiria uma agregação
-  (soma por filial+data) que não foi confirmada como a regra correta —
-  não decidi isso sozinho.
+- **Retirada Depósito — RESOLVIDA.** Fonte oficial confirmada a partir do
+  painel HTML atual (ver seção "Regras Confirmadas a partir do Painel
+  Atual" abaixo): `Retirada Depósito.xlsx`, considerando apenas linhas
+  com `Motivo = "DEPOSITO"`. As demais abas/arquivos investigados
+  (`RETIRADA DEPOSITO.xlsx` com suas 7 abas, `RETIRADA DEPOSITO NOVO.xlsx`)
+  **não alimentam** o indicador atual — não foram unificados nem tratados
+  como a mesma base.
+- **PDV × Maquininha — RESOLVIDA.** Fonte oficial confirmada:
+  `PDV X Adquirente - Consolidado.xlsx`, aba `Export`. `banco x maquina.xlsx`
+  **não é usado** pelo painel atual.
+- **Faturamento — RESOLVIDA.** Regra oficial confirmada:
+  `SUM(Vl. pagamento) GROUP BY Filial, Data` a partir do arquivo no
+  formato de `CONCILIAÇÃO/BG 01/FATURAMENTO - 1 SEMESTRE 2026.xlsx`
+  (colunas Filial/Data/Desc. pagam./Vl. pagamento), sem exclusão de
+  cancelamento ou de valores negativos — é exatamente o que o painel
+  atual já faz.
 - **Nomenclatura de unidade "BIGGS NN - Nome":** confirmada em
   `RETIRADA DEPOSITO NOVO.xlsx` para 11 unidades (ver
   `apps/web/lib/import/normalizarUnidade.ts`). Não apareceu nomenclatura
   equivalente para BG 08 E 09, IS 01-03, ROBS e MAPOLI em nenhum arquivo
   inspecionado — a tabela de mapeamento **não é exaustiva** e precisa ser
   completada ou confirmada como suficiente.
+- **Nomenclatura de unidade "CASARIA" → MAPOLI:** achado no painel HTML
+  atual (`normalizeFilialJS`), **investigado nas bases reais mas AINDA
+  NÃO adicionado ao código** — ver seção "Investigação: CASARIA → MAPOLI"
+  abaixo.
+
+## Regras Confirmadas a partir do Painel Atual (HTML)
+
+Fonte: `Painel_Executivo_Financeiro_-_Ragga_Gestão.html` (painel de
+referência mencionado no planejamento original). As 3 regras abaixo
+foram lidas diretamente do código-fonte desse painel (JavaScript) e são
+consideradas as regras **oficiais e já validadas em produção** — não
+foram inventadas nem deduzidas por suposição.
+
+### Faturamento
+- **Fonte:** arquivo Excel no formato de `FATURAMENTO - 1 SEMESTRE 2026.xlsx`
+  (aba "Planilha", ou a primeira aba).
+- **Colunas exigidas:** `Filial`, `Data`, `Desc. pagam.`, `Vl. pagamento`.
+- **Transformação:** `SUM(Vl. pagamento)` agrupado por `Filial + Data`.
+  Nenhuma linha é excluída por cancelamento ou valor negativo.
+- **Chave de reimportação:** `Filial + Data` (upsert — substitui o valor
+  do dia, não soma de novo).
+- **Regra de data:** D-1.
+
+### PDV × Maquininha
+- **Fonte oficial:** `PDV X Adquirente - Consolidado.xlsx`, aba `Export`
+  especificamente (cai para a 1ª aba só se "Export" não existir).
+  `banco x maquina.xlsx` **não é usado**.
+- **Colunas exigidas:** `Loja`, `Data`, coluna que começa com "forma de
+  pag" (`Forma de Pag.`), coluna que começa com "venda" (`Venda (PDV -
+  Cloud)`), coluna que começa com "total maq" (`Total Maq. (Adquirente -
+  Sicredi)`), `Diferença`.
+- **Transformação:** guarda os 3 números crus por `Filial+Data+Forma`
+  (`valorPDV`, `valorMaquininha`, `diferenca`) — a diferença não é
+  recalculada, é lida direto da planilha.
+- **Chave de reimportação:** `Filial + Data + Forma` (upsert).
+- **Regra de data:** D-2, aplicada em tempo de consulta sobre a única
+  coluna `Data` existente (não há uma segunda coluna de "data da
+  máquina" em nenhum arquivo real).
+
+### Retirada Depósito
+- **Fonte oficial:** `Retirada Depósito.xlsx` (a versão de ~56 registros,
+  única que tem as colunas `Motivo` E `Motivo/Descrição` separadas).
+- **Colunas exigidas:** `Filial`, `Caixa`, `Data`, `Valor`, `Motivo`,
+  `Motivo/Descrição`, `Usuário`, `Usuário autorizador`.
+- **Transformação/filtro:** o indicador "Retirada Depósito" só soma
+  linhas onde `Motivo` (coluna oficial de classificação) é **exatamente
+  "DEPOSITO"** (case/acento-insensível). Outras classificações no mesmo
+  arquivo (ex. "SUPRIMENTO") existem mas são excluídas deste indicador.
+- **Chave de reimportação:** `Filial + Data + Caixa + Motivo +
+  Motivo/Descrição + Usuário + Usuário autorizador` (valor
+  deliberadamente fora da chave, para que uma correção de valor atualize
+  o registro em vez de criar um novo).
+- **As abas `RETIRADA DEPOSITO.xlsx` (coud/SUPRIMENTO/SANGRIA/RETIRDA
+  PARA SUPRIR/RETIRADA INCORRETA) e `RETIRADA DEPOSITO NOVO.xlsx` NÃO
+  alimentam este indicador hoje.**
+
+## Investigação: "CASARIA" → MAPOLI
+
+Buscado em todos os 38 arquivos `.xlsx` de `BASE DE DADOS - POWERBI`
+(incluindo subpastas; **não** buscado na pasta pessoal `Downloads`, que
+tem centenas de outros arquivos fora do escopo do projeto).
+
+**Onde "CASARIA" aparece como valor de Filial/Loja (não apenas em texto
+livre de motivo/descrição):**
+
+| Arquivo | Aba | Linha (exemplo) | Data | Coluna |
+|---|---|---|---|---|
+| `RETIRADA DEPOSITO NOVO.xlsx` | Planilha1 | 17, 33, 49 | 04/09/2025, 08/09/2025, 12/09/2025 | Loja |
+| `indicadores/BRINDES - 2 SEMESTRE 2025.xlsx` | Planilha1 | 205, 285, 357 (e outras) | 03/11/2025, 04/11/2025, 05/11/2025 | Loja — caixa associado: `"CA01 - PDV 01"` |
+| `CONTROLE DE CONFERENCIA E QUEBRAS DE CAIXA (5).xlsx` | `QUEBRA 16-08 A 15-09` | 15, 21 | 17/08/2026, 18/08/2026 | LOJA (col. 3, junto de "MONALISA" na coluna de conferente) |
+| `indicadores/CANCELAMENTO DE DELIVERY - 2 SEMESTRE 2025.xlsx` | — | — | 2º semestre 2025 | Filial |
+| `indicadores/CANCELAMENTO DE SALÃO - 2 SEMESTRE 2025.xlsx` | — | — | 2º semestre 2025 | Filial |
+| `indicadores/COMPRA DIRETA - 2 SEMESTRE 2025.xlsx` | — | — | 2º semestre 2025 | Filial |
+| `PROJETO_RECEBIVEIS/04_REGRAS/REGRAS_RECEBIVEIS.xlsx` | — | — | — | — |
+| `PROJETO_RECEBIVEIS/07_SAIDAS_DINHEIRO/COMPRA DIRETA NOV.xlsx` | — | — | — | Filial |
+
+**Evidência direta de que é a MAPOLI:** o arquivo
+`PROJETO_RECEBIVEIS/02_EXTRATOS_BANCARIOS/02_EXTRATOS_BANCARIOS.xlsx`
+contém literalmente a string **`"MAPOLI 01 - CASARIA"`** — as duas
+palavras juntas na mesma célula, associando explicitamente o nome
+"Casaria" à unidade Mapoli.
+
+**Padrão observado:** a maioria das ocorrências de "CASARIA" como valor
+de filial está em bases do 2º semestre de 2025 (com caixa associado no
+prefixo `"CA01"`, não `"BG"`/`"IS"`), mas também aparece em agosto/2026
+na aba `QUEBRA 16-08 A 15-09` do arquivo de Conferência/Quebra de Caixa
+— ou seja, **não é só um nome histórico abandonado**; ainda aparecia em
+dados recentes (ago/2026). Não sei se isso é uso inconsistente contínuo
+ou um caso isolado.
+
+**Não adicionei "CASARIA" ao mapeamento de normalização** — aguardando
+sua decisão explícita.
