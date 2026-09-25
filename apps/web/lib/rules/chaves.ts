@@ -14,9 +14,11 @@ export const CHAVES_POR_BASE: Record<TipoBase, readonly string[]> = {
   compra_direta: ["unidade_id", "data", "motivo"],
   retirada_deposito: [], // não deduplicado — cada lançamento é um registro
   // validação/auditoria, não dedup (fechamento_caixa não deduplica).
-  // "caixa" foi removido da chave (validado nas bases reais): filial+data+caixa
-  // causava perda de registros legítimos. Chave de referência: filial+data+movimento.
-  fechamento_caixa: ["unidade_id", "data", "movimento"],
+  // Chave validada nas bases reais: filial+data+caixa+movimento (0
+  // duplicidades). filial+data+caixa (sem movimento) gerava 16
+  // duplicidades — "caixa" é necessário: dois caixas da mesma filial podem
+  // ter o mesmo movimento na mesma data.
+  fechamento_caixa: ["unidade_id", "data", "caixa", "movimento"],
   pdv_maquininha: ["unidade_id", "data", "forma_pagamento"],
   formas_pagamento: ["unidade_id", "data", "forma"],
   conferencia: ["unidade_id", "data", "tipo"],

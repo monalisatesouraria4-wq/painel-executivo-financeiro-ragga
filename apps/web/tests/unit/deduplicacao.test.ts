@@ -43,8 +43,13 @@ describe("chaves de deduplicação (conforme especificado no planejamento)", () 
   it("pdv_maquininha: filial + data + forma_pagamento", () => {
     expect(CHAVES_POR_BASE.pdv_maquininha).toEqual(["unidade_id", "data", "forma_pagamento"]);
   });
-  it("fechamento_caixa: filial + data + movimento (não usa caixa — validado nas bases reais)", () => {
-    expect(CHAVES_POR_BASE.fechamento_caixa).toEqual(["unidade_id", "data", "movimento"]);
+  it("fechamento_caixa: filial + data + caixa + movimento (validado nas bases reais — zero duplicidades)", () => {
+    expect(CHAVES_POR_BASE.fechamento_caixa).toEqual([
+      "unidade_id",
+      "data",
+      "caixa",
+      "movimento",
+    ]);
   });
   it("conferencia: filial + data + tipo", () => {
     expect(CHAVES_POR_BASE.conferencia).toEqual(["unidade_id", "data", "tipo"]);

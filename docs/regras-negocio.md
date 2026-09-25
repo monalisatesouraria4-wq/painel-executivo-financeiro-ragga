@@ -35,9 +35,11 @@ Implementado em `apps/web/lib/rules/datas.ts`.
 
 - **Fechamento de Caixa:** não deduplicar. Uma loja pode ter mais de uma
   movimentação. Chave de referência (validação/auditoria, não dedup):
-  filial + data + movimento. **Confirmado com dados reais (Etapa 2):**
-  não usar "caixa" na chave — filial + data + caixa causava perda de
-  registros legítimos.
+  filial + data + caixa + movimento. **Corrigido/confirmado com dados
+  reais (Etapa 2):** filial + data + caixa (sem movimento) gerava 16
+  duplicidades; filial + data + caixa + movimento gerou zero — "caixa"
+  precisa permanecer na chave, pois dois caixas da mesma filial podem ter
+  o mesmo movimento na mesma data.
 - **Brindes:** chave: filial + data + motivo + motivo2.
 - **Faturamento:** chave: filial + data.
 - **Compra Direta:** chave: filial + data + motivo.

@@ -25,9 +25,11 @@ function colunasComuns() {
 }
 
 /**
- * Chave de referência (auditoria, não dedup): filial + data + movimento.
- * "caixa" foi removido da chave de referência — validado nas bases reais
- * que filial+data+caixa causava perda de registros legítimos.
+ * Chave de referência (auditoria, não dedup): filial + data + caixa +
+ * movimento. Validado nas bases reais: filial+data+caixa (sem movimento)
+ * gerava 16 duplicidades; filial+data+caixa+movimento gerou zero. "caixa"
+ * é necessário: dois caixas da mesma filial podem ter o mesmo movimento
+ * na mesma data.
  */
 export const fechamentoCaixa = pgTable(
   "fechamento_caixa",
