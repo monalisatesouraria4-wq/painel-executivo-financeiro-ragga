@@ -30,6 +30,13 @@ function colunasComuns() {
  * gerava 16 duplicidades; filial+data+caixa+movimento gerou zero. "caixa"
  * é necessário: dois caixas da mesma filial podem ter o mesmo movimento
  * na mesma data.
+ *
+ * SEM campo de valor monetário — confirmado (Etapa 3) que a fonte real
+ * (FECHAMENTO DE CAIXA - ABERTOS_FECHADOS_CONCILIADOS.xlsx.xlsx) não tem
+ * essa coluna. Campos abaixo preservam exatamente o que existe na fonte:
+ * Abertura/Fechamento como texto (formatos observados variam, ex.
+ * "10:26" e "01/09 14:08" — não reinterpretados), Situação, e as três
+ * colunas de diferença (podem ser nulas, como na fonte).
  */
 export const fechamentoCaixa = pgTable(
   "fechamento_caixa",
@@ -37,7 +44,13 @@ export const fechamentoCaixa = pgTable(
     ...colunasComuns(),
     caixa: text("caixa").notNull(),
     movimento: text("movimento").notNull(),
-    valor: numeric("valor", { precision: 14, scale: 2 }).notNull(),
+    abertura: text("abertura"),
+    fechamento: text("fechamento"),
+    operador: text("operador"),
+    situacao: text("situacao"),
+    difFechamento: numeric("dif_fechamento", { precision: 14, scale: 2 }),
+    difConciliacao: numeric("dif_conciliacao", { precision: 14, scale: 2 }),
+    difTotal: numeric("dif_total", { precision: 14, scale: 2 }),
   },
   (table) => [index("fechamento_caixa_unidade_data_idx").on(table.unidadeId, table.data)]
 );
@@ -55,12 +68,19 @@ export const retiradaDeposito = pgTable(
 /**
  * Troco. `data` armazena a data real do lançamento na semana (planejamento:
  * "utilizar as datas reais da semana", sem tolerância inventada).
+ *
+ * Confirmado (Etapa 3): a fonte real tem DOIS valores — troco conferido
+ * pelo gerente e troco informado pelo colaborador — mais a diferença
+ * entre eles. Os três são preservados separadamente, sem escolher um só.
  */
 export const troco = pgTable(
   "troco",
   {
     ...colunasComuns(),
-    valor: numeric("valor", { precision: 14, scale: 2 }).notNull(),
+    caixa: text("caixa").notNull(),
+    trocoConferidoGerente: numeric("troco_conferido_gerente", { precision: 14, scale: 2 }).notNull(),
+    trocoInformadoColaborador: numeric("troco_informado_colaborador", { precision: 14, scale: 2 }).notNull(),
+    diferenca: numeric("diferenca", { precision: 14, scale: 2 }).notNull(),
   },
   (table) => [index("troco_unidade_data_idx").on(table.unidadeId, table.data)]
 );

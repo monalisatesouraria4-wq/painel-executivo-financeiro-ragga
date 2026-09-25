@@ -39,7 +39,15 @@ Implementado em `apps/web/lib/rules/datas.ts`.
   reais (Etapa 2):** filial + data + caixa (sem movimento) gerava 16
   duplicidades; filial + data + caixa + movimento gerou zero — "caixa"
   precisa permanecer na chave, pois dois caixas da mesma filial podem ter
-  o mesmo movimento na mesma data.
+  o mesmo movimento na mesma data. **Confirmado (levantamento pós-Etapa
+  3):** a fonte real não tem valor monetário — o schema guarda os campos
+  reais (Abertura, Fechamento, Operador, Situação, Dif. fech., Dif.
+  conc., Dif. total), sem coluna "valor".
+- **Troco:** guarda os DOIS valores da fonte real separadamente —
+  `troco_conferido_gerente` e `troco_informado_colaborador` — mais a
+  `diferenca` entre eles, sem escolher apenas um (levantamento pós-Etapa
+  3). Não deduplicar; reimportação de um período substitui apenas aquele
+  período.
 - **Brindes:** chave: filial + data + motivo + motivo2.
 - **Faturamento:** chave: filial + data.
 - **Compra Direta:** chave: filial + data + motivo.
@@ -245,17 +253,11 @@ origem), faturamento (nível de agregação da fonte).
 
 ### Pendências encontradas na Etapa 3 (motor de importação) — bloqueiam o parser final das bases abaixo
 
-- **Conferência — estrutura real diverge do planejamento.** O planejamento
-  descreve marcação por caixa (`0`/`X`/vazio). O arquivo real
-  (`CONTROLE DE CONFERENCIA E QUEBRAS DE CAIXA (5).xlsx`) não tem marcação
-  por caixa: cada aba de período tem uma linha por filial e uma coluna por
-  dia do período, com a **contagem de caixas conferidos naquele dia**
-  (mais colunas de "Qtd. caixas cadastrados"). É um modelo agregado
-  (filial+dia → contagem), não un modelo por caixa individual. Preciso que
-  você defina: o que o sistema deve gravar — a contagem diária por filial
-  como está no arquivo, ou existe uma fonte diferente com marcação por
-  caixa que ainda não foi mapeada? **(ainda pendente — não faz parte da
-  resolução de aba abaixo, que já está pronta)**
+- **Conferência — modelo de dados: CONFIRMADO.** O modelo real é uma
+  contagem diária agregada por filial (não marcação por caixa individual)
+  — confirmado pelo usuário. Schema/parser ainda não foram alterados para
+  refletir esse modelo (só a resolução de aba, abaixo, está pronta) —
+  fica para quando as próximas bases forem implementadas.
 
 - **Conferência — resolução de aba por período: RESOLVIDA.** Implementada
   em `apps/web/lib/import/periodoAbaConferencia.ts` +
@@ -278,28 +280,35 @@ origem), faturamento (nível de agregação da fonte).
   `15/11/2026` não é coberto por nenhuma aba. O sistema retorna erro claro
   para essa data (não inventa cobertura). Sinalizo para sua ciência; não
   corrigi o arquivo nem o resolvedor para "tapar" esse buraco.
-- **Fechamento de Caixa — arquivo real não tem valor monetário.** O
-  arquivo `FECHAMENTO DE CAIXA - ABERTOS_FECHADOS_CONCILIADOS.xlsx.xlsx`
-  tem: Data, Filial, Caixa, Movto., Abertura, Fechamento, Operador,
-  Situação, Dif. fech., Dif. conc., Dif. total — sem coluna de valor. O
-  schema atual (`fechamento_caixa.valor numeric NOT NULL`) não tem de
-  onde vir. Preciso de definição: o que esse valor representa e de qual
-  coluna real ele deveria vir (talvez as diferenças, talvez este não seja
-  o arquivo certo para "valor").
-- **Troco — arquivo real tem DOIS valores, schema só tem um.** O arquivo
-  `TROCO SEMANAL.xlsx` tem "R$ TROCO CONFERIDO PELO GERENTE" e "R$ TROCO
-  INFORMADO PELO COLABORADOR" (mais a diferença). O schema (`troco.valor`)
-  só grava um número. Preciso de decisão: gravar os dois valores (exige
-  alterar o schema), gravar só um deles (qual?), ou gravar a diferença.
-- **Retirada Depósito — três arquivos candidatos com estruturas
-  diferentes.** Encontrei `RETIRADA DEPOSITO.xlsx` (aba "coud": Filial,
-  Caixa, Data, Valor, Motivo/Descrição — nomes de filial já no padrão
-  canônico "BG NN"), `RETIRADA DEPOSITO NOVO.xlsx` (duas abas: "Planilha1"
-  com Loja/Data/Sistema/Banco/Diferença e "Planilha2" com a mesma
-  estrutura de "coud", mas usando nomes "BIGGS NN - Nome"), e
-  `Retirada Depósito.xlsx` (estrutura parecida com "coud", 56 linhas).
-  Não sei qual é a fonte oficial atual, nem se são períodos diferentes do
-  mesmo processo ou arquivos concorrentes/obsoletos.
+- **Fechamento de Caixa — RESOLVIDA.** Confirmado: sem campo de valor
+  monetário. Schema ajustado para os campos reais (Abertura, Fechamento,
+  Operador, Situação, Dif. fech., Dif. conc., Dif. total) — ver
+  `apps/web/lib/db/schema/fatosSemDedup.ts`. Parser ainda não implementado
+  (fica para a próxima etapa de implementação desta base).
+- **Troco — RESOLVIDA.** Confirmado: gravar os dois valores separadamente.
+  Schema ajustado com `troco_conferido_gerente`,
+  `troco_informado_colaborador` e `diferenca` — ver
+  `apps/web/lib/db/schema/fatosSemDedup.ts`. Também foi adicionado o campo
+  `caixa` (existe na fonte real e distingue registros da mesma
+  filial/data, ex. "DELIVERY NOTURNO" vs "SALÃO DIURNO") — isso não foi
+  pedido explicitamente, sinalizo como adição consciente, não uma decisão
+  de negócio nova. Parser ainda não implementado.
+- **Retirada Depósito — 4 arquivos, 7 abas relevantes, dois conceitos
+  misturados.** `RETIRADA DEPOSITO.xlsx` tem 7 abas: 5 são lançamentos de
+  retirada (`coud` 281 registros, `SUPRIMENTO` 64, `SANGRIA` 17,
+  `RETIRDA PARA SUPRIR` 29, `RETIRADA INCORRETA` 9 — todas com a mesma
+  estrutura `Filial, Caixa, Data, Valor, Motivo/Descrição, Usuário,
+  Usuário autorizador`), e 2 são reconciliação banco×sistema (`banco x
+  coud` 1.574 registros: `DATA, BANCO, COUD, DIFERENÇA, LOJA, REFERENTE`;
+  e `Justificativa` 37 registros). `RETIRADA DEPOSITO NOVO.xlsx` também
+  tem 2 abas: `Planilha1` (1.579 registros, mesmo formato de "banco x
+  coud" — reconciliação) e `Planilha2` (120 registros, mesmo formato de
+  "coud", mas unidades como "BIGGS NN - Nome"). `Retirada Depósito.xlsx`
+  (56 registros) também é formato "coud". Preciso de decisão: (a) unificar
+  as 5 abas de lançamento numa única base `retirada_deposito` usando o
+  nome da aba como `motivo`? (b) qual arquivo é a fonte oficial de
+  lançamentos hoje? (c) a reconciliação banco×sistema é uma base nova,
+  ainda não prevista no planejamento?
 - **PDV × Maquininha — dois arquivos candidatos.**
   `banco x maquina.xlsx` (Loja, Data, Forma de Pag., Sistema, Maquininha,
   Diferença) e `PDV X Adquirente - Consolidado.xlsx` (Loja, Data, Forma de

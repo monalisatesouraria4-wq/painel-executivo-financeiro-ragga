@@ -134,7 +134,13 @@ CREATE TABLE "fechamento_caixa" (
 	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
 	"caixa" text NOT NULL,
 	"movimento" text NOT NULL,
-	"valor" numeric(14, 2) NOT NULL
+	"abertura" text,
+	"fechamento" text,
+	"operador" text,
+	"situacao" text,
+	"dif_fechamento" numeric(14, 2),
+	"dif_conciliacao" numeric(14, 2),
+	"dif_total" numeric(14, 2)
 );
 --> statement-breakpoint
 CREATE TABLE "quebra_caixa" (
@@ -162,7 +168,10 @@ CREATE TABLE "troco" (
 	"data" date NOT NULL,
 	"importacao_id" uuid,
 	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
-	"valor" numeric(14, 2) NOT NULL
+	"caixa" text NOT NULL,
+	"troco_conferido_gerente" numeric(14, 2) NOT NULL,
+	"troco_informado_colaborador" numeric(14, 2) NOT NULL,
+	"diferenca" numeric(14, 2) NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "parametros_semaforo" (

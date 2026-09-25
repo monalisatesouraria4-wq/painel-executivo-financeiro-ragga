@@ -1,5 +1,5 @@
 {
-  "id": "8ff32642-b4cc-4aaa-a0c8-6a84b4717181",
+  "id": "63815fbb-2a4e-4798-a111-5468e9116b11",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1091,11 +1091,47 @@
           "primaryKey": false,
           "notNull": true
         },
-        "valor": {
-          "name": "valor",
+        "abertura": {
+          "name": "abertura",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fechamento": {
+          "name": "fechamento",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operador": {
+          "name": "operador",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "situacao": {
+          "name": "situacao",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dif_fechamento": {
+          "name": "dif_fechamento",
           "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "dif_conciliacao": {
+          "name": "dif_conciliacao",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dif_total": {
+          "name": "dif_total",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1410,8 +1446,26 @@
           "notNull": true,
           "default": "now()"
         },
-        "valor": {
-          "name": "valor",
+        "caixa": {
+          "name": "caixa",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "troco_conferido_gerente": {
+          "name": "troco_conferido_gerente",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "troco_informado_colaborador": {
+          "name": "troco_informado_colaborador",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "diferenca": {
+          "name": "diferenca",
           "type": "numeric(14, 2)",
           "primaryKey": false,
           "notNull": true
