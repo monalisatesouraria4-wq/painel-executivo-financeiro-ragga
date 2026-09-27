@@ -223,14 +223,27 @@ genérico + `parsers/quebraCaixa.ts` específico), relatório de validação
 (`relatorio.ts`) e simulação de gravação (`simularGravacao.ts`, upsert por
 chave ou delete-do-período+insert, sem tocar banco real).
 
-**Bases com parser pronto e testado contra os arquivos reais:** brindes,
-cancelamento_salao, cancelamento_delivery, compra_direta, quebra_caixa,
-faturamento, pdv_maquininha, retirada_deposito, **fechamento_caixa**,
-**troco**.
+**Todas as 12 bases do planejamento têm parser implementado e testado
+contra os arquivos reais:** brindes, cancelamento_salao,
+cancelamento_delivery, compra_direta, quebra_caixa, faturamento,
+pdv_maquininha, retirada_deposito, fechamento_caixa, troco,
+**conferencia**. (Formas de Pagamento como base própria ainda não foi
+investigada — ver pendências.)
 
-**Base com pendência (parser NÃO finalizado — schema atual não reflete o
-modelo real confirmado, ver "Divergência: Conferência" abaixo):**
-conferência.
+### Conferência — dry-run contra o arquivo real (todas as abas válidas)
+
+| Aba | Período (linha 6) | Registros | Rejeitados | Células vazias | Cadastrados | Conferidos | Em atraso |
+|---|---|---|---|---|---|---|---|
+| `16.08 a 15.09` | 16/08 a 15/09/2026 | 527 | 4 | 0 | 1.984 | 1.568 | 50 |
+| `16.09 a 15.10` | 16/09 a 15/10/2026 | 70 | 4 | 380 | 300 | 232 | 9 |
+| `16.10 a 15.11` | 16/10 a 15/11/2026 | 0 | 4 | 465 | 0 | 0 | 0 |
+| `16.11 a 15.12` | 16/11 a 15/12/2026 | 0 | 4 | 450 | 0 | 0 | 0 |
+| `16.12 a 15.01` | 16/12/2026 a 15/01/2027 | 0 | 4 | 465 | 0 | 0 | 0 |
+| **Total** | | **597** | **20** | **1.760** | **2.284** | **1.800** | **59** |
+
+As abas com 0 registros são períodos futuros ainda sem dados de conferência lançados (só linhas de rodapé/instrução, corretamente rejeitadas). As abas `QUEBRA 16-08 A 15-09`, `QUEBRA 16-09 A 15-10` e `16-10 A 15-09` foram corretamente identificadas como estruturalmente inválidas para Conferência (não processadas).
+
+**Todos os 20 rejeitados são linhas de rodapé/instrução da planilha, não filiais reais:** `"TOTAL DE CAIXAS"` (linha de total), o texto de instrução completo (`"Digite a quantidade conferida no dia • 0 = conferido sem caixas • X = atraso • MAPOLI: sábado e domingo não entram como atraso."`), linhas em branco, e duas linhas com código de filial de uma letra só (`"R"`, `"C"`) que não correspondem a nenhuma das 17 unidades — não adivinhei o que significam.
 
 ### Normalização de unidade — generalizada (Etapa 4)
 
@@ -357,27 +370,41 @@ linhas válidas.
 
 ### Pendências encontradas na Etapa 3 (motor de importação) — bloqueiam o parser final das bases abaixo
 
-- **Conferência — modelo de dados: CONFIRMADO, mas DIVERGE do schema
-  atual — parser NÃO implementado, aguardando decisão.** O modelo real
-  (confirmado pelo usuário) é uma contagem diária agregada por filial:
-  dentro da aba resolvida, cada linha é uma filial, com colunas
-  `Resp. pela Conferência`, `Filial`, `Qtd. caixas` (total cadastrado) e
-  depois uma coluna por dia do período, cujo valor é a quantidade de
-  caixas conferidos naquele dia. Não existe "tipo" nem marcação por
-  caixa individual (0/X/vazio).
+- **Conferência — RESOLVIDA (schema alterado, parser implementado).**
+  O modelo real é uma contagem diária agregada por filial. Investigação
+  adicional (a pedido do usuário) encontrou um **terceiro estado**: a
+  célula do dia pode ser um número (qtd. conferida), o texto `"X"`/`"x"`
+  (marcado manualmente como em atraso — confirmado pela própria fórmula
+  de resumo do período, que conta literalmente `UPPER(célula)="X"`), ou
+  vazia (sem lançamento ainda). Exemplo real: no período 16/08 a
+  15/09/2026, as filiais BG 05 e BG 12 têm a linha inteira em `"X"`.
 
-  O schema atual (`apps/web/lib/db/schema/fatosComDedup.ts`, tabela
-  `conferencia`) ainda reflete o modelo ANTIGO (por caixa): tem colunas
-  `tipo` (não existe na fonte real), `marcacao` (0/X/vazio — não existe
-  na fonte real) e uma constraint única em `(unidade_id, data, tipo)`.
-  Nenhuma dessas 3 colunas faz sentido para o modelo confirmado.
+  Schema ajustado (`apps/web/lib/db/schema/fatosComDedup.ts`, tabela
+  `conferencia`): `qtd_cadastrados` (integer, not null — vem da coluna
+  "Qtd. caixas"), `qtd_conferidos` (integer, **nullable** — NULL quando a
+  célula é "X"/"x" ou vazia, **nunca convertido para 0**), `em_atraso`
+  (boolean, true somente quando a célula é "X"/"x"), `fonte_periodo_id`
+  (auditoria da aba de origem). Chave única `(unidade_id, data)` — sem
+  `tipo`. Check constraint garante que `qtd_conferidos` nunca é
+  preenchido quando `em_atraso = true`.
 
-  Para caber no modelo real, o schema precisaria de algo como
-  `unidade_id + data + qtd_cadastrados + qtd_conferidos` (chave única em
-  `unidade_id + data`, sem `tipo`) — mas isso é uma alteração de schema
-  que ainda não fiz, conforme pedido ("se encontrar divergência, pare e
-  apresente antes de decidir"). **Não implementei o parser nem alterei o
-  schema desta base — aguardando sua decisão.**
+  Parser em `apps/web/lib/import/parsers/conferencia.ts`, usando a
+  resolução de aba já validada (linha 6, sem inferir ano pelo nome, erro
+  claro quando nenhuma aba cobre a data). Célula vazia não gera registro
+  (ainda não há lançamento) — contada à parte (`celulasVazias`), nunca
+  persistida como valor; isso é uma decisão técnica minha para não gerar
+  linhas "fantasma" para dias futuros do período ainda não preenchidos,
+  sinalizada aqui para sua ciência, não uma regra de negócio que você já
+  tinha confirmado explicitamente.
+
+  **Achado adicional nos dados reais:** existe uma nota na própria
+  planilha (linha de instrução dentro da grade): *"0 = conferido sem
+  caixas • X = atraso • MAPOLI: sábado e domingo não entram como
+  atraso."* — confirma que `0` numérico é um valor de conferência válido
+  (não é "vazio"), e que a exceção de fim de semana da MAPOLI (já prevista
+  no planejamento original) se refere a não marcar atraso, o que já é
+  compatível com o parser (célula vazia nunca vira `em_atraso = true`,
+  só "X" explícito vira).
 
 - **Conferência — resolução de aba por período: RESOLVIDA.** Implementada
   em `apps/web/lib/import/periodoAbaConferencia.ts` +

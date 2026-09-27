@@ -81,13 +81,12 @@ CREATE TABLE "conferencia" (
 	"importacao_id" uuid,
 	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
 	"atualizado_em" timestamp with time zone DEFAULT now() NOT NULL,
-	"tipo" text NOT NULL,
-	"marcacao" text DEFAULT '' NOT NULL,
-	"valor_total" numeric(14, 2) DEFAULT '0' NOT NULL,
-	"valor_conferido" numeric(14, 2) DEFAULT '0' NOT NULL,
+	"qtd_cadastrados" integer NOT NULL,
+	"qtd_conferidos" integer,
+	"em_atraso" boolean DEFAULT false NOT NULL,
 	"fonte_periodo_id" uuid NOT NULL,
-	CONSTRAINT "conferencia_chave" UNIQUE("unidade_id","data","tipo"),
-	CONSTRAINT "conferencia_marcacao_valida" CHECK ("conferencia"."marcacao" in ('0','X',''))
+	CONSTRAINT "conferencia_chave" UNIQUE("unidade_id","data"),
+	CONSTRAINT "conferencia_qtd_conferidos_nulo_se_em_atraso" CHECK (NOT ("conferencia"."em_atraso" AND "conferencia"."qtd_conferidos" IS NOT NULL))
 );
 --> statement-breakpoint
 CREATE TABLE "faturamento" (

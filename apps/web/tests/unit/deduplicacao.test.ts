@@ -51,7 +51,7 @@ describe("chaves de deduplicação (conforme especificado no planejamento)", () 
       "movimento",
     ]);
   });
-  it("conferencia: filial + data + tipo", () => {
-    expect(CHAVES_POR_BASE.conferencia).toEqual(["unidade_id", "data", "tipo"]);
+  it("conferencia: filial + data (sem 'tipo' — contagem diária agregada por filial)", () => {
+    expect(CHAVES_POR_BASE.conferencia).toEqual(["unidade_id", "data"]);
   });
 });

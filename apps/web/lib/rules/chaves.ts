@@ -21,7 +21,9 @@ export const CHAVES_POR_BASE: Record<TipoBase, readonly string[]> = {
   fechamento_caixa: ["unidade_id", "data", "caixa", "movimento"],
   pdv_maquininha: ["unidade_id", "data", "forma_pagamento"],
   formas_pagamento: ["unidade_id", "data", "forma"],
-  conferencia: ["unidade_id", "data", "tipo"],
+  // Corrigido (planejamento v4): a fonte real é uma contagem diária
+  // agregada por filial, sem "tipo" — chave é só filial+data.
+  conferencia: ["unidade_id", "data"],
   troco: [], // não deduplicado — registros repetidos são legítimos
   quebra_caixa: [], // não deduplicado — lançamentos repetidos são legítimos
 };
