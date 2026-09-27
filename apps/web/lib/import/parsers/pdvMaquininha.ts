@@ -70,7 +70,11 @@ export function parsePdvMaquininha(cabecalho: unknown[], linhas: unknown[][]): R
       data,
       valor: valorPdv,
       extras: {
-        forma: idxForma >= 0 ? parseTextoCelula(linha[idxForma]) : "",
+        // A chave desta base (lib/rules/chaves.ts: unidade_id+data+
+        // forma_pagamento) lê `extras.forma_pagamento` — usar qualquer
+        // outro nome aqui faz `gerarRelatorioImportacao` não achar o
+        // campo e tratar TODAS as formas do mesmo dia como colidentes.
+        forma_pagamento: idxForma >= 0 ? parseTextoCelula(linha[idxForma]) : "",
         valorMaquininha: String(valorMaquininha),
         diferenca: String(diferenca),
       },

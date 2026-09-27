@@ -265,16 +265,29 @@ continuam retornando `null`, sem serem confundidos).
 | PDV × Maquininha | `PDV X Adquirente - Consolidado.xlsx` / Export | 1.306 | 1.306 | 0 | PDV R$ 2.482.663,93 / Maquininha R$ 2.473.602,78 / Dif. −R$ 9.061,15 | 01/09 a 20/09/2026 |
 | Retirada Depósito | `Retirada Depósito.xlsx` | 55 | 9 (Motivo=DEPOSITO) | 46 (outras classificações, ex. SUPRIMENTO/ERRO) | R$ 6.520,00 | 15/09 a 24/09/2026 |
 
-**Achado a sinalizar (não é uma decisão, é um número observado):** em
-PDV × Maquininha, das 1.306 linhas válidas, **973 colidem na chave
-filial+data+forma** (ou seja, muitas combinações filial+data+forma
-aparecem mais de uma vez no arquivo `Export`). Isso é mais do que o
-esperado para um relatório consolidado diário — pode ser normal (o
-arquivo talvez seja atualizado/reexportado acumulando períodos
-sobrepostos) ou pode indicar que o arquivo real tem múltiplas linhas por
-dia por algum motivo ainda não investigado. Não decidi nada sobre isso —
-com upsert por chave, a reimportação já trataria isso corretamente (fica
-só a última ocorrência por chave), mas o número alto merece sua atenção.
+**Correção (bug do parser, não da fonte):** o dry-run inicial de PDV ×
+Maquininha reportou 973 "colisões de chave" — o usuário confirmou
+diretamente no Excel que `Loja+Data+Forma de Pag.` é 100% única nas
+1.306 linhas do arquivo real. Investigado: `parsePdvMaquininha` gravava
+a forma de pagamento em `extras.forma`, mas
+`CHAVES_POR_BASE.pdv_maquininha` (lib/rules/chaves.ts) espera
+`extras.forma_pagamento` — como `gerarRelatorioImportacao` lê o campo
+pelo nome definido em `CHAVES_POR_BASE`, o campo não era encontrado,
+virava string vazia para toda linha, e a chave efetiva colapsava para
+só `filial+data` — cada grupo de até 4 formas do mesmo dia aparecia como
+"colidindo" entre si (973/1306 ≈ 74,5%, compatível com 3 de cada 4
+formas colidindo com a 1ª). Corrigido renomeando o campo para
+`forma_pagamento` em `apps/web/lib/import/parsers/pdvMaquininha.ts`.
+Nenhuma linha foi descartada em nenhum momento — a contagem de colisões
+é só diagnóstico, nunca influenciou o parsing. Nenhuma regra de
+deduplicação foi criada ou alterada. Reexecutado o dry-run após a
+correção: **0 colisões**, confirmando `UNIQUE(Loja+Data+Forma de Pag.)`
+como já era esperado. Teste de regressão adicionado em
+`tests/unit/pdvMaquininha.test.ts`.
+
+**Total por forma de pagamento (dry-run corrigido):** Crédito 333,
+Débito 333, Pix 327, Voucher 313 — soma 1.306, batendo com o total de
+linhas válidas.
 
 ## Pendências de Validação (não são decisões tomadas, apenas registradas)
 
