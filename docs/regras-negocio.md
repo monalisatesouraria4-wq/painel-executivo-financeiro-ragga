@@ -225,10 +225,56 @@ chave ou delete-do-período+insert, sem tocar banco real).
 
 **Bases com parser pronto e testado contra os arquivos reais:** brindes,
 cancelamento_salao, cancelamento_delivery, compra_direta, quebra_caixa,
-**faturamento**, **pdv_maquininha**, **retirada_deposito**.
+faturamento, pdv_maquininha, retirada_deposito, **fechamento_caixa**,
+**troco**.
 
-**Bases com pendência (parser NÃO finalizado — ver "Pendências" abaixo):**
-conferência, fechamento_caixa (contagem/soma), troco (qual valor gravar).
+**Base com pendência (parser NÃO finalizado — schema atual não reflete o
+modelo real confirmado, ver "Divergência: Conferência" abaixo):**
+conferência.
+
+### Normalização de unidade — generalizada (Etapa 4)
+
+`normalizarUnidade.ts` deixou de ser uma lista fixa de nomes e passou a
+espelhar fielmente `normalizeFilialJS` do painel HTML atual (regex
+genérica para `BG NN`/`BIGGS NN`/`IS NN`/`ISAIAS NN`, mais `CASARIA` →
+`MAPOLI`). Necessário porque o arquivo real de Fechamento de Caixa usa
+`"ISAIAS 01 - MARINGA"`, um padrão que a lista fixa anterior não cobria
+— mas que o painel oficial já reconhece, então isso não é uma regra
+nova. **Mudança de comportamento correspondente:** `"BG 09"` e `"BG 08"`
+isolados agora são aceitos e dobrados em `BG 08 E 09` (antes eram
+rejeitados) — replica exatamente o que `normalizeFilialJS` já faz em
+produção.
+
+### Fechamento de Caixa e Troco — parsers implementados
+
+Implementados em `apps/web/lib/import/parsers/fechamentoCaixa.ts` e
+`troco.ts`, preservando exatamente a estrutura e as regras já aprovadas
+(sem valor monetário em fechamento_caixa; os dois valores separados —
+`troco_conferido_gerente`/`troco_informado_colaborador` — em troco).
+
+- **Fechamento de Caixa:** `RegistroBase.valor` usa `0` como placeholder
+  (a base não tem valor monetário); os campos reais (Abertura,
+  Fechamento, Operador, Situação, as 3 diferenças) ficam em `extras`.
+  Chave de auditoria filial+data+caixa+movimento usada só para o
+  relatório de colisões, nunca para descartar linhas — confirmado no
+  dry-run: 0 colisões reportadas para uma base sem-dedup, como esperado.
+- **Troco:** a coluna "Diferença" é uma fórmula de tabela do Excel sem
+  resultado cacheado na maioria das linhas reais (1.547 de 1.630) — em
+  vez de depender desse cache ausente, o parser recalcula
+  `diferenca = trocoConferidoGerente - trocoInformadoColaborador`,
+  exatamente a mesma subtração que a fórmula da planilha descreve (não
+  é uma regra nova). Colunas reais "OPERADOR" e "PLANO DE AÇÃO" não têm
+  campo correspondente no schema aprovado — não persistidas nesta etapa
+  (pendência leve, sinalizada, não bloqueante).
+
+**Dry-run contra os arquivos reais (sem gravar nada):**
+
+| Base | Arquivo | Lidos | Válidos | Rejeitados | Totais | Período |
+|---|---|---|---|---|---|---|
+| Fechamento de Caixa | `FECHAMENTO DE CAIXA - ABERTOS_FECHADOS_CONCILIADOS.xlsx.xlsx` | 1.385 | 1.385 | 0 | Situação: Conciliado 1.066, Fechado 318, Aberto 1 | 01/09 a 24/09/2026 |
+| Troco | `TROCO SEMANAL.xlsx` | 1.630 | 1.627 | 3 (1 caixa vazio, 2 com célula-fórmula sem valor numérico no próprio troco conferido/informado) | Conferido R$ 2.113.141,83 / Informado R$ 2.113.516,11 / Diferença −R$ 374,28 (75 de 1.627 registros com diferença ≠ 0) | 08/04 a 23/09/2026 |
+
+Ambas as bases cobrem as 17 unidades.
 
 ### Faturamento, PDV × Maquininha e Retirada Depósito — parsers implementados
 
@@ -311,11 +357,27 @@ linhas válidas.
 
 ### Pendências encontradas na Etapa 3 (motor de importação) — bloqueiam o parser final das bases abaixo
 
-- **Conferência — modelo de dados: CONFIRMADO.** O modelo real é uma
-  contagem diária agregada por filial (não marcação por caixa individual)
-  — confirmado pelo usuário. Schema/parser ainda não foram alterados para
-  refletir esse modelo (só a resolução de aba, abaixo, está pronta) —
-  fica para quando as próximas bases forem implementadas.
+- **Conferência — modelo de dados: CONFIRMADO, mas DIVERGE do schema
+  atual — parser NÃO implementado, aguardando decisão.** O modelo real
+  (confirmado pelo usuário) é uma contagem diária agregada por filial:
+  dentro da aba resolvida, cada linha é uma filial, com colunas
+  `Resp. pela Conferência`, `Filial`, `Qtd. caixas` (total cadastrado) e
+  depois uma coluna por dia do período, cujo valor é a quantidade de
+  caixas conferidos naquele dia. Não existe "tipo" nem marcação por
+  caixa individual (0/X/vazio).
+
+  O schema atual (`apps/web/lib/db/schema/fatosComDedup.ts`, tabela
+  `conferencia`) ainda reflete o modelo ANTIGO (por caixa): tem colunas
+  `tipo` (não existe na fonte real), `marcacao` (0/X/vazio — não existe
+  na fonte real) e uma constraint única em `(unidade_id, data, tipo)`.
+  Nenhuma dessas 3 colunas faz sentido para o modelo confirmado.
+
+  Para caber no modelo real, o schema precisaria de algo como
+  `unidade_id + data + qtd_cadastrados + qtd_conferidos` (chave única em
+  `unidade_id + data`, sem `tipo`) — mas isso é uma alteração de schema
+  que ainda não fiz, conforme pedido ("se encontrar divergência, pare e
+  apresente antes de decidir"). **Não implementei o parser nem alterei o
+  schema desta base — aguardando sua decisão.**
 
 - **Conferência — resolução de aba por período: RESOLVIDA.** Implementada
   em `apps/web/lib/import/periodoAbaConferencia.ts` +
@@ -338,19 +400,16 @@ linhas válidas.
   `15/11/2026` não é coberto por nenhuma aba. O sistema retorna erro claro
   para essa data (não inventa cobertura). Sinalizo para sua ciência; não
   corrigi o arquivo nem o resolvedor para "tapar" esse buraco.
-- **Fechamento de Caixa — RESOLVIDA.** Confirmado: sem campo de valor
-  monetário. Schema ajustado para os campos reais (Abertura, Fechamento,
-  Operador, Situação, Dif. fech., Dif. conc., Dif. total) — ver
-  `apps/web/lib/db/schema/fatosSemDedup.ts`. Parser ainda não implementado
-  (fica para a próxima etapa de implementação desta base).
-- **Troco — RESOLVIDA.** Confirmado: gravar os dois valores separadamente.
-  Schema ajustado com `troco_conferido_gerente`,
-  `troco_informado_colaborador` e `diferenca` — ver
-  `apps/web/lib/db/schema/fatosSemDedup.ts`. Também foi adicionado o campo
-  `caixa` (existe na fonte real e distingue registros da mesma
-  filial/data, ex. "DELIVERY NOTURNO" vs "SALÃO DIURNO") — isso não foi
-  pedido explicitamente, sinalizo como adição consciente, não uma decisão
-  de negócio nova. Parser ainda não implementado.
+- **Fechamento de Caixa — RESOLVIDA, parser implementado (Etapa 4).**
+  Confirmado: sem campo de valor monetário. Schema com os campos reais
+  (Abertura, Fechamento, Operador, Situação, Dif. fech., Dif. conc.,
+  Dif. total) — ver `apps/web/lib/db/schema/fatosSemDedup.ts` e
+  `apps/web/lib/import/parsers/fechamentoCaixa.ts`.
+- **Troco — RESOLVIDA, parser implementado (Etapa 4).** Confirmado:
+  gravar os dois valores separadamente. Schema com
+  `troco_conferido_gerente`, `troco_informado_colaborador`, `diferenca`
+  e `caixa` — ver `apps/web/lib/db/schema/fatosSemDedup.ts` e
+  `apps/web/lib/import/parsers/troco.ts`.
 - **Retirada Depósito — RESOLVIDA.** Fonte oficial confirmada a partir do
   painel HTML atual (ver seção "Regras Confirmadas a partir do Painel
   Atual" abaixo): `Retirada Depósito.xlsx`, considerando apenas linhas
@@ -367,12 +426,12 @@ linhas válidas.
   (colunas Filial/Data/Desc. pagam./Vl. pagamento), sem exclusão de
   cancelamento ou de valores negativos — é exatamente o que o painel
   atual já faz.
-- **Nomenclatura de unidade "BIGGS NN - Nome":** confirmada em
-  `RETIRADA DEPOSITO NOVO.xlsx` para 11 unidades (ver
-  `apps/web/lib/import/normalizarUnidade.ts`). Não apareceu nomenclatura
-  equivalente para BG 08 E 09, IS 01-03, ROBS e MAPOLI em nenhum arquivo
-  inspecionado — a tabela de mapeamento **não é exaustiva** e precisa ser
-  completada ou confirmada como suficiente.
+- **Nomenclatura de unidade "BIGGS NN"/"ISAIAS NN" — RESOLVIDA (Etapa 4).**
+  `normalizarUnidade.ts` agora usa a mesma lógica genérica por regex do
+  painel HTML atual (`normalizeFilialJS`), em vez de uma lista fixa de
+  nomes — cobre qualquer `"BIGGS NN"`/`"ISAIAS NN"` (com ou sem sufixo de
+  nome da loja), não só os 11 nomes vistos antes. Confirmado contra
+  `FECHAMENTO DE CAIXA...xlsx`, que usa `"ISAIAS 01 - MARINGA"`.
 - **Nomenclatura de unidade "CASARIA" → MAPOLI: RESOLVIDA.** Confirmado
   pelo usuário e adicionado a `apps/web/lib/import/normalizarUnidade.ts`
   — ver seção "Investigação: CASARIA → MAPOLI" abaixo.

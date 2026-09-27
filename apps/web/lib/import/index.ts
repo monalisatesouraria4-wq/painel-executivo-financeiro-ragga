@@ -10,5 +10,7 @@ export * from "./parsers/quebraCaixa";
 export * from "./parsers/faturamento";
 export * from "./parsers/pdvMaquininha";
 export * from "./parsers/retiradaDeposito";
+export * from "./parsers/fechamentoCaixa";
+export * from "./parsers/troco";
 export * from "./periodoAbaConferencia";
 export * from "./resolverAbaConferencia";

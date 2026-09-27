@@ -26,9 +26,25 @@ describe("normalizarUnidade", () => {
     if (r.ok) expect(r.codigo).toBe("MAPOLI");
   });
 
-  it("rejeita BG 09 isolado (não existe — é parte de BG 08 E 09)", () => {
+  it("'BG 09' isolado é reconhecido como parte de BG 08 E 09, não rejeitado " +
+    "(corrigido na Etapa 4: o painel HTML oficial dobra 'BG 09' em BG 08 E 09 " +
+    "em vez de rejeitar — mesma regra de negócio 'BG 09 não existe separado', " +
+    "só que aplicada como fusão de nomenclatura, não como rejeição de dado)", () => {
     const r = normalizarUnidade("BG 09");
-    expect(r.ok).toBe(false);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.codigo).toBe("BG 08 E 09");
+  });
+
+  it("'BG 08' isolado também é reconhecido como BG 08 E 09 (mesma regra)", () => {
+    const r = normalizarUnidade("BG 08");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.codigo).toBe("BG 08 E 09");
+  });
+
+  it("'ISAIAS NN - Nome' (confirmado em FECHAMENTO DE CAIXA) mapeia para IS NN", () => {
+    const r = normalizarUnidade("ISAIAS 01 - MARINGA");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.codigo).toBe("IS 01");
   });
 
   it("rejeita BG 14 a BG 18 (não existem nos dados reais)", () => {
