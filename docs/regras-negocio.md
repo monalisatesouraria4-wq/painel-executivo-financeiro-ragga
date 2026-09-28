@@ -551,3 +551,110 @@ ou um caso isolado.
 **Confirmado pelo usuário.** Adicionado a
 `apps/web/lib/import/normalizarUnidade.ts` (`CASARIA` → `MAPOLI`), com
 teste em `apps/web/tests/unit/normalizarUnidade.test.ts`.
+
+## Formas de Pagamento — RESOLVIDA (Etapa 5)
+
+Confirmado: não existe planilha própria. Fonte = a mesma do Faturamento
+(`FATURAMENTO - 1 SEMESTRE 2026.xlsx`), agregada por
+**Filial + Data + `Desc. pagam.`** em vez de só Filial + Data.
+Implementado em `apps/web/lib/import/parsers/formasPagamento.ts`.
+
+Dry-run: 648.989 linhas lidas, **16.458 registros válidos** (combinações
+filial+data+forma), 0 rejeitados, 0 colisões de chave, soma total
+R$ 32.308.466,70 (bate exatamente com o total de Faturamento). Por forma:
+Pagamento online R$ 8.647.088,54, Cartão Crédito R$ 7.347.475,92, Cartão
+Débito R$ 7.168.421,19, Pix Maquininha R$ 3.212.095,68, Venda a prazo
+R$ 2.552.883,36, Dinheiro R$ 2.328.191,70, Voucher R$ 1.046.574,31 (junta
+"VOUCHER" e "VOUCHER " com espaço), Cupom de desconto (iFood)
+R$ 5.590,35, "voucher" minúsculo R$ 145,65 (mantido separado — não
+normalizei capitalização sem confirmação).
+
+## Decisão de Negócio: SUPRIMENTO / SANGRIA / RETIRDA PARA SUPRIR / RETIRADA INCORRETA — FORA DE ESCOPO
+
+Confirmado pelo usuário: essas 4 categorias de movimentação de caixa
+(abas do arquivo `RETIRADA DEPOSITO.xlsx`) **ficam fora da base
+`retirada_deposito` e fora do escopo atual do painel**. Nenhum schema ou
+parser foi criado para elas. Isso é uma decisão de negócio registrada
+aqui — não deve voltar a aparecer como pendência a menos que o escopo do
+projeto seja revisado explicitamente no futuro.
+
+## Banco × Sistema — comparação entre as duas fontes candidatas (ainda SEM schema criado)
+
+Comparação entre `RETIRADA DEPOSITO.xlsx` / aba `banco x coud` (fonte A)
+e `RETIRADA DEPOSITO NOVO.xlsx` / aba `Planilha1` (fonte B), agregando
+por unidade normalizada + data:
+
+| | Fonte A (`banco x coud`) | Fonte B (`Planilha1`, NOVO) |
+|---|---|---|
+| Combinações unidade+data | 1.493 | 1.461 |
+| Linhas brutas | 1.573 | 1.561 |
+| Linhas sem unidade reconhecida | 80 | 67 |
+| Período | 04/09/2025 a 14/09/2026 | 04/09/2025 a 14/09/2026 |
+
+- **Chaves só na fonte A:** 32 — todas do dia **17/04/2026** (as 17
+  unidades desse único dia existem em A mas não em B — um buraco de um
+  dia inteiro na fonte B).
+- **Chaves só na fonte B:** 0 — a fonte B não tem nenhuma combinação que
+  a fonte A não tenha (além do buraco de um dia, B é um superconjunto).
+- **Chaves em ambas:** 1.461, das quais **1.440 idênticas (98,6%)** e
+  **21 diferentes**.
+- Nas 21 diferentes, o padrão não é uniforme: em alguns casos (ex. BG 02
+  20/04/2026) a fonte B tem valores onde A tem zero — sugerindo que B foi
+  atualizada com correções que A não recebeu. Em outros casos (ex. BG 10
+  27/04/2026) é o oposto — A tem valores que B não tem.
+- Em pelo menos 4 dos 21 casos divergentes, a fonte B tem **2 linhas**
+  para a mesma unidade+data (A tem só 1) — sugerindo lançamentos de
+  ajuste/correção adicionais em B.
+
+**Conclusão desta comparação (sem decidir sozinho qual é "a oficial"):**
+nenhuma das duas fontes é estritamente mais completa que a outra — B
+cobre mais casos recentes (menos linhas "sem unidade", nenhuma chave
+exclusiva), mas tem um buraco de um dia inteiro que A não tem, e há
+casos isolados de valores divergentes em ambas as direções. **Não criei
+schema nem parser para esta base ainda** — aguardando decisão de qual
+fonte usar (ou se as duas devem ser mescladas, com B tendo prioridade
+onde ambas existem, preenchendo o buraco de 17/04 com A).
+
+## Investigação adicional: "R" e "C" na Conferência
+
+Confirmado (sem inferir): **todas as abas de período a partir de
+"16.09 a 15.10" em diante** têm `"R"` e `"C"` exatamente nas linhas 22 e
+23 — as MESMAS posições onde a aba "16.08 a 15.09" (o primeiro período,
+provavelmente o modelo original) tem `"ROBS"` e `"MAPOLI"` por extenso,
+com o mesmo `Qtd. caixas = 1` em ambos os casos. Não há nota de célula
+nem validação de lista na planilha que confirme isso explicitamente.
+
+**Evidência é posicional/circunstancial, não uma confirmação literal.**
+Consistente com a hipótese de que os períodos seguintes foram criados
+copiando o modelo do primeiro e os nomes "ROBS"/"MAPOLI" foram
+truncados/abreviados sem querer — mas **não encontrei nenhum registro
+explícito que confirme isso com certeza**. Conforme instruído, **não
+alterei o normalizador** — "R" e "C" continuam rejeitados no parser.
+
+## Investigação: duplicatas exatas no Faturamento (1.013 linhas)
+
+- **963 chaves com exatamente 2 ocorrências**, **50 chaves com 3 ou mais**.
+- **Presentes em todas as 17 unidades**, proporcionalmente ao tamanho de
+  cada uma (IS 01: 175, BG 05: 158, ... MAPOLI: 4) — não concentradas em
+  uma loja específica.
+- **Fortemente concentradas em formas de pagamento de cartão/maquininha:**
+  Cartão Crédito (490), Cartão Débito (432), Pix Maquininha (109),
+  Voucher (35), Venda a prazo (4), **Dinheiro (apenas 1)**. Isso sugere
+  uma característica sistêmica ligada à integração com a maquininha/
+  adquirente (ex. reenvio de transação), não erro de digitação manual.
+- **Não concentradas em datas específicas** — distribuídas ao longo de
+  quase todo o semestre, sem pico isolado (a data com mais duplicatas
+  tem 19 casos, em ~130 dias com dado).
+- **Impacto no `SUM(Vl. pagamento)`:** as ocorrências "extras" (2ª em
+  diante de cada chave duplicada) somam **R$ 58.729,98** — 0,18% do
+  total de R$ 32.308.466,70. Se forem duplicatas indevidas, o
+  faturamento estaria superestimado nesse valor; se forem transações
+  legítimas coincidentes, não há problema.
+- **O painel atual já inclui essas duplicatas hoje:** confirmado no
+  código-fonte (`lerArquivoFaturamento`) — não há nenhuma lógica de
+  deduplicação por lá, cada linha é somada sem checar repetição. Isso
+  não é uma regressão introduzida agora; é o comportamento já em
+  produção.
+
+**Não removi, não fiz DISTINCT, não alterei o parser nem a regra de
+Faturamento** — apenas o diagnóstico solicitado.

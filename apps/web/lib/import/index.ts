@@ -13,5 +13,6 @@ export * from "./parsers/retiradaDeposito";
 export * from "./parsers/fechamentoCaixa";
 export * from "./parsers/troco";
 export * from "./parsers/conferencia";
+export * from "./parsers/formasPagamento";
 export * from "./periodoAbaConferencia";
 export * from "./resolverAbaConferencia";
