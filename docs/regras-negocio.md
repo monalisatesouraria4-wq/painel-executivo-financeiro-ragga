@@ -743,14 +743,46 @@ registro; `qtd_cadastrados` vem de "Qtd. caixas").
 sistema agora usam upsert por chave — nenhuma usa mais "delete do
 período + insert".**
 
-**Divergência encontrada e NÃO resolvida sozinho:** no dry-run real do
-Troco, **66 combinações de `unidade+data+caixa` aparecem mais de uma vez**
-no arquivo `TROCO SEMANAL.xlsx` com valores diferentes entre as
-ocorrências. Com upsert, só a última sobrevive — se essas 66 forem
-duplicidades legítimas (e não apenas correções sucessivas do mesmo
-lançamento), a mudança para upsert perde informação que "delete
-período + insert" preservaria. Sinalizo para sua ciência; não decidi
-qual comportamento é o correto.
+### Investigação das 66 colisões do Troco — RESOLVIDA (chave mantida)
+
+No dry-run real do Troco, 66 combinações de `unidade+data+caixa`
+aparecem mais de uma vez no arquivo `TROCO SEMANAL.xlsx`. Investigadas
+linha a linha (todas em pares — nenhum grupo com 3+ linhas), todas
+concentradas em só duas datas do arquivo real (`22/04/2026` e
+`03/06/2026`, sugerindo que o bloco semanal inteiro dessas duas datas
+foi lançado duas vezes na planilha de origem):
+
+| Categoria | Quantidade | Descrição |
+|---|---|---|
+| Duplicata exata | **54/66** | Todos os campos idênticos (conferido, informado, operador, plano) nas duas linhas |
+| Correção do mesmo lançamento | **10/66** | Mesmo operador; a segunda ocorrência corrige o `conferido` para bater com o `informado` (zera a diferença) |
+| **Caso ambíguo** | **2/66** | Valores substancialmente diferentes **e** operadores diferentes — sem padrão de correção; podem ser dois lançamentos legítimos ou um erro de dupla digitação |
+
+**Os 2 casos ambíguos (documentados como exceção da fonte real, não resolvidos):**
+```
+BG 03 | 22/04/2026 | SALÃO NOTURNO
+  linha 131: conferido=R$1.618,00,    operador="NICOLE"
+  linha 134: conferido=R$3.462,95,    operador="ANNA"
+
+BG 07 | 22/04/2026 | DELIVERY NOTURNO
+  linha 151: conferido=R$995,20,  operador="THALISSA"
+  linha 154: conferido=R$2.099,60, operador="ANA GUIDES"
+```
+
+**Decisão (usuário, confirmada):** a chave oficial do Troco permanece
+`unidade_id + data + caixa` — **não alterada**. `operador` **não** entra
+na chave. Motivo: o painel HTML atual usa exatamente essa mesma chave
+(`chaveTroco`) e tem a mesma limitação para esses 2 casos — manter a
+chave idêntica preserva o alinhamento já validado com o painel, em vez
+de criar uma regra de deduplicação nova e mais complexa para resolver
+uma exceção de apenas 2 registros em 1.630.
+
+Os 2 casos ambíguos **precisam de validação operacional** (com quem
+lançou os dados) caso seja necessário determinar qual dos dois valores
+é o correto — isso não foi resolvido automaticamente, não foi somado,
+nem foi escolhido "primeiro" ou "último" por regra nova. **Nenhuma
+alteração de código, schema, parser ou chave foi feita por causa dessa
+investigação.**
 
 ### Dry-run das 7 bases alteradas (sem gravar nada)
 
