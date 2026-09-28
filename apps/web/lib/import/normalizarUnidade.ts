@@ -21,6 +21,14 @@ import { UNIDADES, type CodigoUnidade } from "@painel/shared";
  *   "BIGGS NN - Nome" / "ISAIAS NN - Nome".
  * - "CASARIA" → MAPOLI: confirmado pelo usuário (ver docs/regras-negocio.md,
  *   seção "Investigação: CASARIA → MAPOLI").
+ * - "R" → ROBS e "C" → MAPOLI: confirmado pelo usuário (visto na base de
+ *   Conferência, abas a partir de "16.09 a 15.10" — abreviação de
+ *   "ROBS"/"MAPOLI ou CASARIA" nas mesmas posições onde o período
+ *   original tinha os nomes por extenso). ATENÇÃO: "R" e "C" são letras
+ *   isoladas — mapeamento válido apenas quando a célula é EXATAMENTE
+ *   "R" ou "C" (sem mais nada); ainda assim, é um alias mais genérico
+ *   que os outros e pode colidir se outra fonte usar "R"/"C" com outro
+ *   significado como valor de filial — não visto até agora.
  */
 
 function removerAcentos(valor: string): string {
@@ -42,6 +50,8 @@ export function normalizarUnidade(valorBruto: string | null | undefined): Result
   const s = removerAcentos(original.trim().toUpperCase()).replace(/\s+/g, " ");
 
   if (s === "CASARIA") return { ok: true, codigo: "MAPOLI" };
+  if (s === "R") return { ok: true, codigo: "ROBS" };
+  if (s === "C") return { ok: true, codigo: "MAPOLI" };
   if (s === "ROBS" || s === "MAPOLI") {
     return CODIGOS_CANONICOS.has(s) ? { ok: true, codigo: s as CodigoUnidade } : { ok: false, valorOriginal: original };
   }

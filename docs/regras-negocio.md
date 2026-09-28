@@ -615,21 +615,20 @@ schema nem parser para esta base ainda** — aguardando decisão de qual
 fonte usar (ou se as duas devem ser mescladas, com B tendo prioridade
 onde ambas existem, preenchendo o buraco de 17/04 com A).
 
-## Investigação adicional: "R" e "C" na Conferência
+## "R" e "C" na Conferência — RESOLVIDA
 
-Confirmado (sem inferir): **todas as abas de período a partir de
-"16.09 a 15.10" em diante** têm `"R"` e `"C"` exatamente nas linhas 22 e
-23 — as MESMAS posições onde a aba "16.08 a 15.09" (o primeiro período,
-provavelmente o modelo original) tem `"ROBS"` e `"MAPOLI"` por extenso,
-com o mesmo `Qtd. caixas = 1` em ambos os casos. Não há nota de célula
-nem validação de lista na planilha que confirme isso explicitamente.
+Investigação encontrou evidência posicional forte (todas as abas de
+período a partir de "16.09 a 15.10" têm `"R"`/`"C"` exatamente nas
+linhas 22/23, as mesmas posições onde a aba "16.08 a 15.09" — o período
+original — tem `"ROBS"`/`"MAPOLI"` por extenso, com o mesmo
+`Qtd. caixas = 1`). **Confirmado explicitamente pelo usuário:** `"R"` =
+ROBS, `"C"` = MAPOLI (também conhecida como CASARIA).
 
-**Evidência é posicional/circunstancial, não uma confirmação literal.**
-Consistente com a hipótese de que os períodos seguintes foram criados
-copiando o modelo do primeiro e os nomes "ROBS"/"MAPOLI" foram
-truncados/abreviados sem querer — mas **não encontrei nenhum registro
-explícito que confirme isso com certeza**. Conforme instruído, **não
-alterei o normalizador** — "R" e "C" continuam rejeitados no parser.
+Adicionado a `apps/web/lib/import/normalizarUnidade.ts`: `"R"` → `ROBS`,
+`"C"` → `MAPOLI` (match exato, célula igual a só essa letra). Como são
+letras isoladas, é um alias mais genérico que os demais — documentado no
+código como um risco a observar caso outra fonte use "R"/"C" com outro
+significado como valor de filial (não visto até agora).
 
 ## Investigação: duplicatas exatas no Faturamento (1.013 linhas)
 

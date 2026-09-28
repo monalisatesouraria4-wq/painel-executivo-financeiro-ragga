@@ -47,6 +47,16 @@ describe("normalizarUnidade", () => {
     if (r.ok) expect(r.codigo).toBe("IS 01");
   });
 
+  it("mapeia 'R' para ROBS e 'C' para MAPOLI (confirmado pelo usuário — Conferência)", () => {
+    const r = normalizarUnidade("R");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.codigo).toBe("ROBS");
+
+    const c = normalizarUnidade("C");
+    expect(c.ok).toBe(true);
+    if (c.ok) expect(c.codigo).toBe("MAPOLI");
+  });
+
   it("rejeita BG 14 a BG 18 (não existem nos dados reais)", () => {
     for (const codigo of ["BG 14", "BG 15", "BG 16", "BG 17", "BG 18"]) {
       const r = normalizarUnidade(codigo);
