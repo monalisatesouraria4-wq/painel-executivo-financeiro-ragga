@@ -24,7 +24,7 @@ describe("parseFechamentoCaixa — sem valor monetário, campos reais preservado
     expect(r.extras.difConciliacao).toBe(""); // null na fonte -> vazio, não "0"
   });
 
-  it("dois caixas da mesma filial/data/movimento NÃO se fundem (sem dedup — mesma regra já confirmada)", () => {
+  it("dois caixas diferentes da mesma filial/data/movimento geram chaves diferentes (não colidem)", () => {
     const linhas = [
       ["01/09/2026", "BG 11", "BG11 - PDV 001", "1", "10:00", "14:00", "A", "Conciliado", 0, 0, 0],
       ["01/09/2026", "BG 11", "BG11 - PDV 002", "1", "10:00", "14:00", "B", "Conciliado", 0, 0, 0],
@@ -52,15 +52,25 @@ describe("parseFechamentoCaixa — sem valor monetário, campos reais preservado
     expect(resultado.rejeitados).toHaveLength(2);
   });
 
-  it("chave de auditoria filial+data+caixa+movimento não gera colisão indevida no relatório", () => {
+  it("chave filial+data+caixa+movimento: caixas diferentes não colidem", () => {
     const linhas = [
       ["01/09/2026", "BG 11", "BG11 - PDV 001", "1", "10:00", "14:00", "A", "Conciliado", 0, 0, 0],
       ["01/09/2026", "BG 11", "BG11 - PDV 002", "1", "10:00", "14:00", "B", "Conciliado", 0, 0, 0],
     ];
     const resultado = parseFechamentoCaixa(cabecalho, linhas);
     const relatorio = gerarRelatorioImportacao("fechamento_caixa", resultado);
-    // fechamento_caixa é sem-dedup: gerarRelatorioImportacao só conta
-    // colisão para bases com estrategia upsert_por_chave — aqui deve ser 0.
     expect(relatorio.colisoesDeChaveNoArquivo).toBe(0);
+  });
+
+  it("REGRESSÃO (Etapa 6): mesma filial+data+caixa+movimento (ex. correção de horário/situação) " +
+    "agora É reportada como colisão de chave — fechamento_caixa passou a ser upsert, alinhado ao " +
+    "painel HTML atual (chaveFechamento), não mais 'sem dedup'", () => {
+    const linhas = [
+      ["01/09/2026", "BG 11", "BG11 - PDV 001", "1", "10:00", "14:00", "A", "Aberto", 0, 0, 0],
+      ["01/09/2026", "BG 11", "BG11 - PDV 001", "1", "10:00", "14:08", "A", "Conciliado", 0, 0, 0],
+    ];
+    const resultado = parseFechamentoCaixa(cabecalho, linhas);
+    const relatorio = gerarRelatorioImportacao("fechamento_caixa", resultado);
+    expect(relatorio.colisoesDeChaveNoArquivo).toBe(1);
   });
 });

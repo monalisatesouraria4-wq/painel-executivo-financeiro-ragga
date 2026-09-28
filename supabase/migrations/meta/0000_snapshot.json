@@ -1,5 +1,5 @@
 {
-  "id": "6b71cc09-722e-4523-a05b-26801f61c426",
+  "id": "99342f67-d306-4473-8a81-3385fef8a7bb",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -663,6 +663,12 @@
           "notNull": true,
           "default": false
         },
+        "resp_conferencia": {
+          "name": "resp_conferencia",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "fonte_periodo_id": {
           "name": "fonte_periodo_id",
           "type": "uuid",
@@ -819,6 +825,150 @@
           "columns": [
             "unidade_id",
             "data"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fechamento_caixa": {
+      "name": "fechamento_caixa",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "unidade_id": {
+          "name": "unidade_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "importacao_id": {
+          "name": "importacao_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "criado_em": {
+          "name": "criado_em",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "atualizado_em": {
+          "name": "atualizado_em",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "caixa": {
+          "name": "caixa",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "movimento": {
+          "name": "movimento",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "abertura": {
+          "name": "abertura",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fechamento": {
+          "name": "fechamento",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operador": {
+          "name": "operador",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "situacao": {
+          "name": "situacao",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dif_fechamento": {
+          "name": "dif_fechamento",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dif_conciliacao": {
+          "name": "dif_conciliacao",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dif_total": {
+          "name": "dif_total",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "fechamento_caixa_unidade_id_unidades_id_fk": {
+          "name": "fechamento_caixa_unidade_id_unidades_id_fk",
+          "tableFrom": "fechamento_caixa",
+          "tableTo": "unidades",
+          "columnsFrom": [
+            "unidade_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fechamento_caixa_importacao_id_importacoes_id_fk": {
+          "name": "fechamento_caixa_importacao_id_importacoes_id_fk",
+          "tableFrom": "fechamento_caixa",
+          "tableTo": "importacoes",
+          "columnsFrom": [
+            "importacao_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "fechamento_caixa_chave": {
+          "name": "fechamento_caixa_chave",
+          "nullsNotDistinct": false,
+          "columns": [
+            "unidade_id",
+            "data",
+            "caixa",
+            "movimento"
           ]
         }
       },
@@ -1034,154 +1184,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.fechamento_caixa": {
-      "name": "fechamento_caixa",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "unidade_id": {
-          "name": "unidade_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "data": {
-          "name": "data",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "importacao_id": {
-          "name": "importacao_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "criado_em": {
-          "name": "criado_em",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "caixa": {
-          "name": "caixa",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "movimento": {
-          "name": "movimento",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "abertura": {
-          "name": "abertura",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "fechamento": {
-          "name": "fechamento",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "operador": {
-          "name": "operador",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "situacao": {
-          "name": "situacao",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "dif_fechamento": {
-          "name": "dif_fechamento",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "dif_conciliacao": {
-          "name": "dif_conciliacao",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "dif_total": {
-          "name": "dif_total",
-          "type": "numeric(14, 2)",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "fechamento_caixa_unidade_data_idx": {
-          "name": "fechamento_caixa_unidade_data_idx",
-          "columns": [
-            {
-              "expression": "unidade_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "data",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "fechamento_caixa_unidade_id_unidades_id_fk": {
-          "name": "fechamento_caixa_unidade_id_unidades_id_fk",
-          "tableFrom": "fechamento_caixa",
-          "tableTo": "unidades",
-          "columnsFrom": [
-            "unidade_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "fechamento_caixa_importacao_id_importacoes_id_fk": {
-          "name": "fechamento_caixa_importacao_id_importacoes_id_fk",
-          "tableFrom": "fechamento_caixa",
-          "tableTo": "importacoes",
-          "columnsFrom": [
-            "importacao_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.quebra_caixa": {
       "name": "quebra_caixa",
       "schema": "",
@@ -1218,11 +1220,46 @@
           "notNull": true,
           "default": "now()"
         },
+        "atualizado_em": {
+          "name": "atualizado_em",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
         "valor": {
           "name": "valor",
           "type": "numeric(14, 2)",
           "primaryKey": false,
           "notNull": true
+        },
+        "conferente": {
+          "name": "conferente",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "operador": {
+          "name": "operador",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "cpf": {
+          "name": "cpf",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "motivo": {
+          "name": "motivo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
         },
         "fonte_periodo_id": {
           "name": "fonte_periodo_id",
@@ -1231,29 +1268,7 @@
           "notNull": true
         }
       },
-      "indexes": {
-        "quebra_caixa_unidade_data_idx": {
-          "name": "quebra_caixa_unidade_data_idx",
-          "columns": [
-            {
-              "expression": "unidade_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "data",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "quebra_caixa_unidade_id_unidades_id_fk": {
           "name": "quebra_caixa_unidade_id_unidades_id_fk",
@@ -1296,7 +1311,20 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "quebra_caixa_chave": {
+          "name": "quebra_caixa_chave",
+          "nullsNotDistinct": false,
+          "columns": [
+            "unidade_id",
+            "data",
+            "conferente",
+            "operador",
+            "cpf",
+            "motivo"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1337,36 +1365,54 @@
           "notNull": true,
           "default": "now()"
         },
+        "atualizado_em": {
+          "name": "atualizado_em",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
         "valor": {
           "name": "valor",
           "type": "numeric(14, 2)",
           "primaryKey": false,
           "notNull": true
+        },
+        "caixa": {
+          "name": "caixa",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "motivo": {
+          "name": "motivo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "motivo_descricao": {
+          "name": "motivo_descricao",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "usuario": {
+          "name": "usuario",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "usuario_autorizador": {
+          "name": "usuario_autorizador",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
         }
       },
-      "indexes": {
-        "retirada_deposito_unidade_data_idx": {
-          "name": "retirada_deposito_unidade_data_idx",
-          "columns": [
-            {
-              "expression": "unidade_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "data",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "retirada_deposito_unidade_id_unidades_id_fk": {
           "name": "retirada_deposito_unidade_id_unidades_id_fk",
@@ -1396,7 +1442,21 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "retirada_deposito_chave": {
+          "name": "retirada_deposito_chave",
+          "nullsNotDistinct": false,
+          "columns": [
+            "unidade_id",
+            "data",
+            "caixa",
+            "motivo",
+            "motivo_descricao",
+            "usuario",
+            "usuario_autorizador"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1437,6 +1497,13 @@
           "notNull": true,
           "default": "now()"
         },
+        "atualizado_em": {
+          "name": "atualizado_em",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
         "caixa": {
           "name": "caixa",
           "type": "text",
@@ -1460,31 +1527,21 @@
           "type": "numeric(14, 2)",
           "primaryKey": false,
           "notNull": true
+        },
+        "operador": {
+          "name": "operador",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "plano_de_acao": {
+          "name": "plano_de_acao",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
-      "indexes": {
-        "troco_unidade_data_idx": {
-          "name": "troco_unidade_data_idx",
-          "columns": [
-            {
-              "expression": "unidade_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "data",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "troco_unidade_id_unidades_id_fk": {
           "name": "troco_unidade_id_unidades_id_fk",
@@ -1514,7 +1571,17 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "troco_chave": {
+          "name": "troco_chave",
+          "nullsNotDistinct": false,
+          "columns": [
+            "unidade_id",
+            "data",
+            "caixa"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

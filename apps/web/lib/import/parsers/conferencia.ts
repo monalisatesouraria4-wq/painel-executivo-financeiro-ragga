@@ -21,6 +21,9 @@ import type { ResultadoParse, RegistroBase } from "../tipos";
  * - Célula vazia: NÃO gera registro (ainda não há lançamento para
  *   aquele dia — nem número nem "X"). Contada à parte no relatório
  *   (`celulasVazias`), nunca persistida como um valor.
+ * - respConferencia = coluna "Resp. pela Conferência" (Etapa 6) — campo
+ *   informativo/auditável, não entra na chave (que continua só
+ *   unidade+data).
  *
  * @param linhaCompleta A linha 6 inteira da aba (colunas: Resp., Filial,
  *   Qtd. caixas, depois uma data por coluna).
@@ -81,6 +84,8 @@ export function parseConferencia(
       return;
     }
 
+    const respConferencia = parseTextoCelula(linha[COL_RESP]);
+
     const qtdCadastrados = parseValorCelula(linha[COL_QTD_CAIXAS]);
     if (qtdCadastrados === null) {
       rejeitados.push({
@@ -124,6 +129,7 @@ export function parseConferencia(
           qtdConferidos: qtdConferidos === null ? "" : String(qtdConferidos),
           emAtraso: String(emAtraso),
           fontePeriodoId,
+          respConferencia,
         },
         linhaOrigem,
       });

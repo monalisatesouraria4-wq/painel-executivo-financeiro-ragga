@@ -2,12 +2,21 @@ import type { TipoBase } from "@painel/shared";
 import { normalizarUnidade } from "../normalizarUnidade";
 import { parseDataCelula, parseValorCelula, parseTextoCelula } from "../parseCelula";
 import { localizarColuna, localizarColunaExata } from "../localizarColuna";
-import type { ResultadoParse } from "../tipos";
+import type { ResultadoParse, RegistroBase } from "../tipos";
 
 interface CampoExtra {
   nome: string;
   coluna: string;
   exata?: boolean;
+  /**
+   * Quando true, célula vazia vira o texto "NÃO INFORMADO" em vez de
+   * string vazia — replica o comportamento confirmado no código-fonte do
+   * painel HTML atual (`lerArquivoBrindes`, `lerArquivoCancSalao`,
+   * `lerArquivoCancDelivery`, `lerArquivoCompraDireta`: `if(motivo ===
+   * '') motivo = 'NÃO INFORMADO';`). Não aplicado a outros campos (ex.:
+   * `motivo2` de Brindes continua vazio/null na fonte real).
+   */
+  naoInformadoSeVazio?: boolean;
 }
 
 interface ConfigListaSimples {
@@ -16,6 +25,15 @@ interface ConfigListaSimples {
   colunaData: string;
   colunaValor: string | null; // null = base sem coluna de valor monetário direta
   camposExtras: CampoExtra[];
+  /**
+   * Quando true, os registros válidos são agregados por SOMA do valor,
+   * agrupando por unidade+data+todos os camposExtras (na ordem
+   * declarada) — replica o padrão `agg.set(chave, ...); combo.valor +=
+   * valor` confirmado no painel HTML para brindes, cancelamento_salao,
+   * cancelamento_delivery e compra_direta. NÃO usado em retirada_deposito
+   * (o painel grava uma linha por lançamento ali, sem somar).
+   */
+  agregarPorSoma?: boolean;
 }
 
 /**
@@ -31,51 +49,84 @@ export const CONFIGS_LISTA_SIMPLES: Record<string, ConfigListaSimples> = {
     colunaData: "DATA",
     colunaValor: "VALOR",
     camposExtras: [
-      { nome: "motivo", coluna: "MOTIVO", exata: true },
+      { nome: "motivo", coluna: "MOTIVO", exata: true, naoInformadoSeVazio: true },
       { nome: "motivo2", coluna: "MOTIVO 02" },
     ],
+    agregarPorSoma: true,
   },
   cancelamento_salao: {
     tipoBase: "cancelamento_salao",
     colunaUnidade: "FILIAL",
     colunaData: "DATA/HORA ESTORNO",
     colunaValor: "VALOR TOTAL",
-    camposExtras: [{ nome: "motivo", coluna: "MOTIVO", exata: true }],
+    camposExtras: [{ nome: "motivo", coluna: "MOTIVO", exata: true, naoInformadoSeVazio: true }],
+    agregarPorSoma: true,
   },
   cancelamento_delivery: {
     tipoBase: "cancelamento_delivery",
     colunaUnidade: "FILIAL",
     colunaData: "DATA/HORA",
     colunaValor: "TOTAL DO PEDIDO",
-    camposExtras: [{ nome: "motivo", coluna: "MOTIVO", exata: true }],
+    camposExtras: [{ nome: "motivo", coluna: "MOTIVO", exata: true, naoInformadoSeVazio: true }],
+    agregarPorSoma: true,
   },
   compra_direta: {
     tipoBase: "compra_direta",
     colunaUnidade: "FILIAL",
     colunaData: "DATA",
     colunaValor: "VALOR",
-    camposExtras: [{ nome: "motivo", coluna: "MOTIVO", exata: true }],
+    camposExtras: [{ nome: "motivo", coluna: "MOTIVO", exata: true, naoInformadoSeVazio: true }],
+    agregarPorSoma: true,
   },
   /**
    * Retirada Depósito — fonte oficial confirmada: `Retirada Depósito.xlsx`
    * (a única variante com "Motivo" e "Motivo/Descrição" como colunas
    * separadas). O filtro "somente Motivo = DEPOSITO" é aplicado depois,
-   * em parseRetiradaDeposito — este config só descreve a leitura bruta.
+   * em parseRetiradaDeposito. Sem agregação por soma — o painel grava uma
+   * linha por lançamento aqui (upsert por chave de 7 campos, não soma).
    */
   retirada_deposito: {
     tipoBase: "retirada_deposito",
     colunaUnidade: "FILIAL",
     colunaData: "DATA",
     colunaValor: "VALOR",
+    // Nomes de `nome` abaixo têm que bater EXATAMENTE com
+    // CHAVES_POR_BASE.retirada_deposito (lib/rules/chaves.ts) — senão
+    // gerarRelatorioImportacao não encontra o campo na hora de montar a
+    // chave (mesmo bug já corrigido antes em pdv_maquininha).
     camposExtras: [
       { nome: "motivo", coluna: "MOTIVO", exata: true },
-      { nome: "motivoDescricao", coluna: "MOTIVO/DESCRICAO" },
+      { nome: "motivo_descricao", coluna: "MOTIVO/DESCRICAO" },
       { nome: "caixa", coluna: "CAIXA", exata: true },
       { nome: "usuario", coluna: "USUARIO", exata: true },
-      { nome: "autorizador", coluna: "USUARIO AUTORIZADOR" },
+      { nome: "usuario_autorizador", coluna: "USUARIO AUTORIZADOR" },
     ],
   },
 };
+
+function agregarRegistrosPorSoma(registros: RegistroBase[], camposExtras: CampoExtra[]): RegistroBase[] {
+  const porChave = new Map<string, RegistroBase & { linhasOrigem: number[] }>();
+
+  for (const r of registros) {
+    const chave = [r.unidade, r.data.toISOString().slice(0, 10), ...camposExtras.map((c) => r.extras[c.nome] ?? "")].join(
+      "||"
+    );
+    const atual = porChave.get(chave);
+    if (atual) {
+      atual.valor = Math.round((atual.valor + r.valor) * 100) / 100;
+      atual.linhasOrigem.push(r.linhaOrigem);
+    } else {
+      porChave.set(chave, { ...r, linhasOrigem: [r.linhaOrigem] });
+    }
+  }
+
+  return [...porChave.values()].map(({ linhasOrigem, ...r }) => ({
+    ...r,
+    // linha de origem não é única após agregação — guarda a primeira,
+    // para fins de referência/depuração apenas.
+    linhaOrigem: linhasOrigem[0],
+  }));
+}
 
 export function parseListaSimples(
   cabecalho: unknown[],
@@ -88,6 +139,7 @@ export function parseListaSimples(
   const idxExtras = config.camposExtras.map((c) => ({
     nome: c.nome,
     idx: c.exata ? localizarColunaExata(cabecalho, c.coluna) : localizarColuna(cabecalho, c.coluna),
+    naoInformadoSeVazio: c.naoInformadoSeVazio ?? false,
   }));
 
   const resultado: ResultadoParse = { registros: [], rejeitados: [] };
@@ -137,8 +189,9 @@ export function parseListaSimples(
     }
 
     const extras: Record<string, string> = {};
-    for (const { nome, idx } of idxExtras) {
-      extras[nome] = idx >= 0 ? parseTextoCelula(linha[idx]) : "";
+    for (const { nome, idx, naoInformadoSeVazio } of idxExtras) {
+      const texto = idx >= 0 ? parseTextoCelula(linha[idx]) : "";
+      extras[nome] = texto === "" && naoInformadoSeVazio ? "NÃO INFORMADO" : texto;
     }
 
     resultado.registros.push({
@@ -149,6 +202,10 @@ export function parseListaSimples(
       linhaOrigem,
     });
   });
+
+  if (config.agregarPorSoma) {
+    resultado.registros = agregarRegistrosPorSoma(resultado.registros, config.camposExtras);
+  }
 
   return resultado;
 }

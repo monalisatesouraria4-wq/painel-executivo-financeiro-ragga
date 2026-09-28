@@ -3,6 +3,9 @@ import { estrategiaGravacao } from "@/lib/rules/deduplicacao";
 import { CHAVES_POR_BASE } from "@/lib/rules/chaves";
 import { TIPOS_BASE } from "@painel/shared";
 
+// Etapa 6: todas as 12 bases usam upsert por chave — confirmado lendo o
+// painel HTML atual. Nenhuma base usa mais "delete período + insert"
+// (TIPOS_BASE_SEM_DEDUP está vazio, ver packages/shared/tiposBase.ts).
 const BASES_COM_DEDUP = [
   "faturamento",
   "brindes",
@@ -12,18 +15,16 @@ const BASES_COM_DEDUP = [
   "pdv_maquininha",
   "formas_pagamento",
   "conferencia",
+  "fechamento_caixa",
+  "troco",
+  "retirada_deposito",
+  "quebra_caixa",
 ] as const;
-
-const BASES_SEM_DEDUP = ["fechamento_caixa", "retirada_deposito", "troco", "quebra_caixa"] as const;
 
 describe("estrategiaGravacao", () => {
   it.each(BASES_COM_DEDUP)("%s usa upsert por chave", (tipoBase) => {
     expect(estrategiaGravacao(tipoBase)).toBe("upsert_por_chave");
     expect(CHAVES_POR_BASE[tipoBase].length).toBeGreaterThan(0);
-  });
-
-  it.each(BASES_SEM_DEDUP)("%s usa delete do período + insert (sem dedup)", (tipoBase) => {
-    expect(estrategiaGravacao(tipoBase)).toBe("delete_periodo_insert");
   });
 
   it("cobre todos os tipos de base definidos em @painel/shared", () => {
@@ -53,5 +54,18 @@ describe("chaves de deduplicação (conforme especificado no planejamento)", () 
   });
   it("conferencia: filial + data (sem 'tipo' — contagem diária agregada por filial)", () => {
     expect(CHAVES_POR_BASE.conferencia).toEqual(["unidade_id", "data"]);
+  });
+  it("troco: filial + data + caixa (chaveTroco do painel)", () => {
+    expect(CHAVES_POR_BASE.troco).toEqual(["unidade_id", "data", "caixa"]);
+  });
+  it("retirada_deposito: filial+data+caixa+motivo+motivo_descricao+usuario+usuario_autorizador (chaveRetirada do painel)", () => {
+    expect(CHAVES_POR_BASE.retirada_deposito).toEqual([
+      "unidade_id", "data", "caixa", "motivo", "motivo_descricao", "usuario", "usuario_autorizador",
+    ]);
+  });
+  it("quebra_caixa: filial+data+conferente+operador+cpf+motivo (chaveQuebraConf do painel)", () => {
+    expect(CHAVES_POR_BASE.quebra_caixa).toEqual([
+      "unidade_id", "data", "conferente", "operador", "cpf", "motivo",
+    ]);
   });
 });

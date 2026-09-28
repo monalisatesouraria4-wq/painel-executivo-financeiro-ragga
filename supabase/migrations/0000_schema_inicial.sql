@@ -84,6 +84,7 @@ CREATE TABLE "conferencia" (
 	"qtd_cadastrados" integer NOT NULL,
 	"qtd_conferidos" integer,
 	"em_atraso" boolean DEFAULT false NOT NULL,
+	"resp_conferencia" text,
 	"fonte_periodo_id" uuid NOT NULL,
 	CONSTRAINT "conferencia_chave" UNIQUE("unidade_id","data"),
 	CONSTRAINT "conferencia_qtd_conferidos_nulo_se_em_atraso" CHECK (NOT ("conferencia"."em_atraso" AND "conferencia"."qtd_conferidos" IS NOT NULL))
@@ -98,6 +99,25 @@ CREATE TABLE "faturamento" (
 	"atualizado_em" timestamp with time zone DEFAULT now() NOT NULL,
 	"valor" numeric(14, 2) NOT NULL,
 	CONSTRAINT "faturamento_chave" UNIQUE("unidade_id","data")
+);
+--> statement-breakpoint
+CREATE TABLE "fechamento_caixa" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"unidade_id" uuid NOT NULL,
+	"data" date NOT NULL,
+	"importacao_id" uuid,
+	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
+	"atualizado_em" timestamp with time zone DEFAULT now() NOT NULL,
+	"caixa" text NOT NULL,
+	"movimento" text NOT NULL,
+	"abertura" text,
+	"fechamento" text,
+	"operador" text,
+	"situacao" text,
+	"dif_fechamento" numeric(14, 2),
+	"dif_conciliacao" numeric(14, 2),
+	"dif_total" numeric(14, 2),
+	CONSTRAINT "fechamento_caixa_chave" UNIQUE("unidade_id","data","caixa","movimento")
 );
 --> statement-breakpoint
 CREATE TABLE "formas_pagamento" (
@@ -125,31 +145,20 @@ CREATE TABLE "pdv_maquininha" (
 	CONSTRAINT "pdv_maquininha_chave" UNIQUE("unidade_id","data","forma_pagamento")
 );
 --> statement-breakpoint
-CREATE TABLE "fechamento_caixa" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"unidade_id" uuid NOT NULL,
-	"data" date NOT NULL,
-	"importacao_id" uuid,
-	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
-	"caixa" text NOT NULL,
-	"movimento" text NOT NULL,
-	"abertura" text,
-	"fechamento" text,
-	"operador" text,
-	"situacao" text,
-	"dif_fechamento" numeric(14, 2),
-	"dif_conciliacao" numeric(14, 2),
-	"dif_total" numeric(14, 2)
-);
---> statement-breakpoint
 CREATE TABLE "quebra_caixa" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"unidade_id" uuid NOT NULL,
 	"data" date NOT NULL,
 	"importacao_id" uuid,
 	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
+	"atualizado_em" timestamp with time zone DEFAULT now() NOT NULL,
 	"valor" numeric(14, 2) NOT NULL,
-	"fonte_periodo_id" uuid NOT NULL
+	"conferente" text DEFAULT '' NOT NULL,
+	"operador" text DEFAULT '' NOT NULL,
+	"cpf" text DEFAULT '' NOT NULL,
+	"motivo" text DEFAULT '' NOT NULL,
+	"fonte_periodo_id" uuid NOT NULL,
+	CONSTRAINT "quebra_caixa_chave" UNIQUE("unidade_id","data","conferente","operador","cpf","motivo")
 );
 --> statement-breakpoint
 CREATE TABLE "retirada_deposito" (
@@ -158,7 +167,14 @@ CREATE TABLE "retirada_deposito" (
 	"data" date NOT NULL,
 	"importacao_id" uuid,
 	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
-	"valor" numeric(14, 2) NOT NULL
+	"atualizado_em" timestamp with time zone DEFAULT now() NOT NULL,
+	"valor" numeric(14, 2) NOT NULL,
+	"caixa" text NOT NULL,
+	"motivo" text NOT NULL,
+	"motivo_descricao" text DEFAULT '' NOT NULL,
+	"usuario" text DEFAULT '' NOT NULL,
+	"usuario_autorizador" text DEFAULT '' NOT NULL,
+	CONSTRAINT "retirada_deposito_chave" UNIQUE("unidade_id","data","caixa","motivo","motivo_descricao","usuario","usuario_autorizador")
 );
 --> statement-breakpoint
 CREATE TABLE "troco" (
@@ -167,10 +183,14 @@ CREATE TABLE "troco" (
 	"data" date NOT NULL,
 	"importacao_id" uuid,
 	"criado_em" timestamp with time zone DEFAULT now() NOT NULL,
+	"atualizado_em" timestamp with time zone DEFAULT now() NOT NULL,
 	"caixa" text NOT NULL,
 	"troco_conferido_gerente" numeric(14, 2) NOT NULL,
 	"troco_informado_colaborador" numeric(14, 2) NOT NULL,
-	"diferenca" numeric(14, 2) NOT NULL
+	"diferenca" numeric(14, 2) NOT NULL,
+	"operador" text,
+	"plano_de_acao" text,
+	CONSTRAINT "troco_chave" UNIQUE("unidade_id","data","caixa")
 );
 --> statement-breakpoint
 CREATE TABLE "parametros_semaforo" (
@@ -249,12 +269,12 @@ ALTER TABLE "conferencia" ADD CONSTRAINT "conferencia_importacao_id_importacoes_
 ALTER TABLE "conferencia" ADD CONSTRAINT "conferencia_fonte_periodo_id_fontes_por_periodo_id_fk" FOREIGN KEY ("fonte_periodo_id") REFERENCES "public"."fontes_por_periodo"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "faturamento" ADD CONSTRAINT "faturamento_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "faturamento" ADD CONSTRAINT "faturamento_importacao_id_importacoes_id_fk" FOREIGN KEY ("importacao_id") REFERENCES "public"."importacoes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fechamento_caixa" ADD CONSTRAINT "fechamento_caixa_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fechamento_caixa" ADD CONSTRAINT "fechamento_caixa_importacao_id_importacoes_id_fk" FOREIGN KEY ("importacao_id") REFERENCES "public"."importacoes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "formas_pagamento" ADD CONSTRAINT "formas_pagamento_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "formas_pagamento" ADD CONSTRAINT "formas_pagamento_importacao_id_importacoes_id_fk" FOREIGN KEY ("importacao_id") REFERENCES "public"."importacoes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pdv_maquininha" ADD CONSTRAINT "pdv_maquininha_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pdv_maquininha" ADD CONSTRAINT "pdv_maquininha_importacao_id_importacoes_id_fk" FOREIGN KEY ("importacao_id") REFERENCES "public"."importacoes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fechamento_caixa" ADD CONSTRAINT "fechamento_caixa_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fechamento_caixa" ADD CONSTRAINT "fechamento_caixa_importacao_id_importacoes_id_fk" FOREIGN KEY ("importacao_id") REFERENCES "public"."importacoes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "quebra_caixa" ADD CONSTRAINT "quebra_caixa_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "quebra_caixa" ADD CONSTRAINT "quebra_caixa_importacao_id_importacoes_id_fk" FOREIGN KEY ("importacao_id") REFERENCES "public"."importacoes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "quebra_caixa" ADD CONSTRAINT "quebra_caixa_fonte_periodo_id_fontes_por_periodo_id_fk" FOREIGN KEY ("fonte_periodo_id") REFERENCES "public"."fontes_por_periodo"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -263,8 +283,4 @@ ALTER TABLE "retirada_deposito" ADD CONSTRAINT "retirada_deposito_importacao_id_
 ALTER TABLE "troco" ADD CONSTRAINT "troco_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "troco" ADD CONSTRAINT "troco_importacao_id_importacoes_id_fk" FOREIGN KEY ("importacao_id") REFERENCES "public"."importacoes"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tratativas" ADD CONSTRAINT "tratativas_unidade_id_unidades_id_fk" FOREIGN KEY ("unidade_id") REFERENCES "public"."unidades"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "importacoes" ADD CONSTRAINT "importacoes_usuario_id_usuarios_id_fk" FOREIGN KEY ("usuario_id") REFERENCES "public"."usuarios"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "fechamento_caixa_unidade_data_idx" ON "fechamento_caixa" USING btree ("unidade_id","data");--> statement-breakpoint
-CREATE INDEX "quebra_caixa_unidade_data_idx" ON "quebra_caixa" USING btree ("unidade_id","data");--> statement-breakpoint
-CREATE INDEX "retirada_deposito_unidade_data_idx" ON "retirada_deposito" USING btree ("unidade_id","data");--> statement-breakpoint
-CREATE INDEX "troco_unidade_data_idx" ON "troco" USING btree ("unidade_id","data");
+ALTER TABLE "importacoes" ADD CONSTRAINT "importacoes_usuario_id_usuarios_id_fk" FOREIGN KEY ("usuario_id") REFERENCES "public"."usuarios"("id") ON DELETE no action ON UPDATE no action;

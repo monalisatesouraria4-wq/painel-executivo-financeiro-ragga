@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseRetiradaDeposito } from "@/lib/import/parsers/retiradaDeposito";
+import { gerarRelatorioImportacao } from "@/lib/import/relatorio";
 
 const cabecalho = ["Filial", "Caixa", "Data", "Valor", "Motivo", "Motivo/Descrição", "Usuário", "Usuário autorizador"];
 
@@ -48,5 +49,16 @@ describe("parseRetiradaDeposito — só Motivo = DEPOSITO (fonte: Retirada Depó
     expect(resultado.registros).toHaveLength(0);
     expect(resultado.rejeitados).toHaveLength(1);
     expect(resultado.rejeitados[0].motivo).toMatch(/Unidade não reconhecida/);
+  });
+
+  it("REGRESSÃO: chave completa (caixa+motivo+motivo_descricao+usuario+usuario_autorizador) não gera " +
+    "falsa colisão no relatório — nomes de extras precisam bater com CHAVES_POR_BASE.retirada_deposito", () => {
+    const linhas = [
+      ["BG 01", "PDV 01", "14/09/2026", 400, "DEPOSITO", "d1", "Ana", "Beto"],
+      ["BG 01", "PDV 02", "14/09/2026", 500, "DEPOSITO", "d2", "Carlos", "Diego"], // caixa/descrição/usuários diferentes
+    ];
+    const resultado = parseRetiradaDeposito(cabecalho, linhas);
+    const relatorio = gerarRelatorioImportacao("retirada_deposito", resultado);
+    expect(relatorio.colisoesDeChaveNoArquivo).toBe(0);
   });
 });

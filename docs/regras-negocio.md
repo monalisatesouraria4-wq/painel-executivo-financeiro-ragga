@@ -657,3 +657,127 @@ significado como valor de filial (não visto até agora).
 
 **Não removi, não fiz DISTINCT, não alterei o parser nem a regra de
 Faturamento** — apenas o diagnóstico solicitado.
+
+## Etapa 6 — Alinhamento com o Painel Atual (regras oficiais definitivas)
+
+Decisão de arquitetura do usuário: o comportamento REAL do painel HTML
+atual é a fonte de verdade operacional — prevalece sobre o texto do
+planejamento original onde os dois divergirem. Todas as regras abaixo
+foram lidas diretamente do código-fonte do painel, nunca inventadas.
+
+### 1. Pré-agregação por soma — Brindes, Cancelamento Salão, Cancelamento Delivery, Compra Direta
+
+Confirmado no painel atual (`lerArquivoBrindes`, `lerArquivoCancSalao`,
+`lerArquivoCancDelivery`, `lerArquivoCompraDireta`): antes de gravar, o
+painel agrupa por Filial+Data+Motivo(+Motivo2, no caso de Brindes) e
+**soma** o valor de todas as linhas do grupo (`agg.set(...); combo.valor
++= valor`) — nunca sobrescreve, nunca faz upsert linha a linha.
+
+Implementado em `apps/web/lib/import/parsers/listaSimples.ts`
+(`agregarPorSoma: true` nas 4 configs). Testado explicitamente que
+**soma antes da agregação == soma depois da agregação** (ver dry-run
+abaixo — diferença de ponto flutuante de ~2,5×10⁻⁸, irrelevante).
+
+Motivo vazio → `"NÃO INFORMADO"` (não string vazia), confirmado nas
+4 bases (`naoInformadoSeVazio: true` no campo `motivo`; `motivo2` de
+Brindes NÃO recebe esse tratamento — a fonte real usa `null`/vazio ali).
+
+### 2. Retirada Depósito
+
+Schema (`retirada_deposito`) ganhou os campos: `caixa`, `motivo`,
+`motivo_descricao`, `usuario`, `usuario_autorizador` — mapeamento
+direto das colunas reais (`Caixa`, `Motivo`, `Motivo/Descrição`,
+`Usuário`, `Usuário autorizador`). Chave (upsert):
+`unidade_id+data+caixa+motivo+motivo_descricao+usuario+usuario_autorizador`
+— bate exatamente com `chaveRetirada` do painel (`valor` fica
+deliberadamente fora da chave). Filtro `Motivo = "DEPOSITO"` mantido,
+confirmado ainda correto. SUPRIMENTO/SANGRIA/RETIRDA PARA
+SUPRIR/RETIRADA INCORRETA continuam fora do escopo (decisão de negócio
+já registrada acima).
+
+### 3. Quebra de Caixa
+
+Schema (`quebra_caixa`) ganhou os campos: `conferente`, `operador`,
+`cpf`, `motivo`. Chave (upsert):
+`unidade_id+data+conferente+operador+cpf+motivo` — bate exatamente com
+`chaveQuebraConf` do painel. O **valor da quebra nunca entra na chave**
+— uma correção de valor atualiza o registro, não cria outro.
+
+### 4. Troco
+
+Schema (`troco`) ganhou os campos: `operador`, `plano_de_acao`. Chave
+(upsert): `unidade_id+data+caixa` — bate exatamente com `chaveTroco` do
+painel. Mantida a diferença calculada como `troco_conferido -
+troco_informado` (decisão explícita do usuário — diverge do painel, que
+lê a diferença literalmente da célula e rejeita a linha se não houver
+valor cacheado; como a maioria das linhas reais não tem cache,
+recalcular é a regra operacional correta).
+
+**Correção de normalização de dado (não é regra de negócio nova):** o
+valor de `Caixa` `"DELIVERUY DIURNO"` (erro de digitação confirmado na
+fonte real, 304 ocorrências) é normalizado para `"DELIVERY DIURNO"` —
+mesma correção já aplicada pelo painel atual.
+
+### 5. Fechamento de Caixa
+
+Nenhuma mudança de campos (já estava correto). Chave (upsert), agora
+enforced como `UNIQUE` no schema:
+`unidade_id+data+caixa+movimento` — bate exatamente com
+`chaveFechamento` do painel.
+
+### 6. Conferência
+
+Schema ganhou o campo `resp_conferencia` (origem: "Resp. pela
+Conferência") — campo informativo/auditável, não entra na chave. Chave
+continua `unidade_id+data`. Nenhuma outra regra já validada foi
+alterada (`X`/`x` → em_atraso; `0` → conferido válido; vazio → não gera
+registro; `qtd_cadastrados` vem de "Qtd. caixas").
+
+### 7. Estratégia de reimportação — mudança arquitetural
+
+`packages/shared/tiposBase.ts`: `TIPOS_BASE_SEM_DEDUP` passou a ser um
+**array vazio**. As 4 tabelas (`fechamento_caixa`, `troco`,
+`retirada_deposito`, `quebra_caixa`) foram realocadas de
+`fatosSemDedup.ts` (arquivo removido) para `fatosComDedup.ts`, com
+`UNIQUE` constraint na chave real de cada uma. **Todas as 12 bases do
+sistema agora usam upsert por chave — nenhuma usa mais "delete do
+período + insert".**
+
+**Divergência encontrada e NÃO resolvida sozinho:** no dry-run real do
+Troco, **66 combinações de `unidade+data+caixa` aparecem mais de uma vez**
+no arquivo `TROCO SEMANAL.xlsx` com valores diferentes entre as
+ocorrências. Com upsert, só a última sobrevive — se essas 66 forem
+duplicidades legítimas (e não apenas correções sucessivas do mesmo
+lançamento), a mudança para upsert perde informação que "delete
+período + insert" preservaria. Sinalizo para sua ciência; não decidi
+qual comportamento é o correto.
+
+### Dry-run das 7 bases alteradas (sem gravar nada)
+
+| Base | Lidos | Válidos (linhas) | Registros finais | Rejeitados | Colisões pós-processamento | Soma antes | Soma depois |
+|---|---|---|---|---|---|---|---|
+| Brindes | 32.892 | 32.892 | **4.312** (pós-agregação) | 0 | 0 | R$ 475.647,86 | R$ 475.647,86 (idêntica) |
+| Cancelamento Salão | 5.225 | 5.225 | **2.648** (pós-agregação) | 0 | 0 | R$ 109.232,37 | R$ 109.232,37 (idêntica) |
+| Cancelamento Delivery | 3.503 | 3.503 | **1.948** (pós-agregação) | 0 | 0 | R$ 139.054,32 | R$ 139.054,32 (idêntica) |
+| Compra Direta | 13.865 | 13.853 | **3.472** (pós-agregação) | 12 | 0 | R$ 1.325.223,51 | R$ 1.325.223,51 (idêntica) |
+| Fechamento de Caixa | 1.385 | 1.385 | 1.385 | 0 | 0 | — | — |
+| Troco | 1.630 | 1.627 | 1.627 | 3 | **66** (ver divergência acima) | — | — |
+| Retirada Depósito | 55 | 9 (Motivo=DEPOSITO) | 9 | 46 (outras classificações) | 0 | — | R$ 6.520,00 |
+
+### Auditoria de chaves — confirmação campo a campo
+
+| Base | Chave do parser (`CHAVES_POR_BASE`) | Chave do painel HTML | Igual? |
+|---|---|---|---|
+| Brindes | unidade+data+motivo+motivo2 | `chaveBrindes` | ✅ |
+| Cancelamento Salão | unidade+data+motivo | chave do painel (CANCSAL) | ✅ |
+| Cancelamento Delivery | unidade+data+motivo | chave do painel (CANCDEL) | ✅ |
+| Compra Direta | unidade+data+motivo | `chaveCompraDireta` | ✅ |
+| Fechamento de Caixa | unidade+data+caixa+movimento | `chaveFechamento` | ✅ |
+| Troco | unidade+data+caixa | `chaveTroco` | ✅ |
+| Retirada Depósito | unidade+data+caixa+motivo+motivo_descricao+usuario+usuario_autorizador | `chaveRetirada` | ✅ |
+| Quebra de Caixa | unidade+data+conferente+operador+cpf+motivo | `chaveQuebraConf` | ✅ |
+| PDV × Maquininha | unidade+data+forma_pagamento | `chavePdv` | ✅ (validado também manualmente pelo usuário) |
+| Faturamento | unidade+data | `chaveFaturamento` | ✅ |
+
+Nenhuma migration foi aplicada em banco real. `DATABASE_URL` segue não
+configurada.

@@ -138,6 +138,9 @@ export const conferencia = pgTable(
     qtdCadastrados: integer("qtd_cadastrados").notNull(),
     qtdConferidos: integer("qtd_conferidos"), // NULL quando em atraso ou célula vazia
     emAtraso: boolean("em_atraso").notNull().default(false),
+    // "Resp. pela Conferência" — campo informativo/auditável da fonte
+    // real (ex.: "MONALISA", "GERENTE"). Não entra na chave.
+    respConferencia: text("resp_conferencia"),
     fontePeriodoId: uuid("fonte_periodo_id")
       .notNull()
       .references(() => fontesPorPeriodo.id),
@@ -145,5 +148,140 @@ export const conferencia = pgTable(
   (table) => [
     unique("conferencia_chave").on(table.unidadeId, table.data),
     check("conferencia_qtd_conferidos_nulo_se_em_atraso", sql`NOT (${table.emAtraso} AND ${table.qtdConferidos} IS NOT NULL)`),
+  ]
+);
+
+/**
+ * As 4 bases abaixo (Fechamento de Caixa, Troco, Retirada Depósito,
+ * Quebra de Caixa) foram REALOCADAS para este arquivo (Etapa 6):
+ * confirmado, lendo o código-fonte do painel HTML atual (fonte oficial
+ * de regras operacionais), que elas usam UPSERT por uma chave composta
+ * própria — não "delete do período + insert" como o planejamento
+ * original descrevia. Ver docs/regras-negocio.md, seção "Estratégia de
+ * Reimportação — Alinhamento com o Painel Atual (Etapa 6)".
+ *
+ * Chave de referência (auditoria, não dedup automático além da chave):
+ * filial + data + caixa + movimento. Validado nas bases reais:
+ * filial+data+caixa (sem movimento) gerava 16 duplicidades;
+ * filial+data+caixa+movimento gerou zero — "caixa" é necessário: dois
+ * caixas da mesma filial podem ter o mesmo movimento na mesma data.
+ * Bate exatamente com `chaveFechamento` do painel HTML atual.
+ *
+ * SEM campo de valor monetário — confirmado que a fonte real
+ * (FECHAMENTO DE CAIXA - ABERTOS_FECHADOS_CONCILIADOS.xlsx.xlsx) não tem
+ * essa coluna. Campos abaixo preservam exatamente o que existe na fonte:
+ * Abertura/Fechamento como texto (formatos observados variam, ex.
+ * "10:26" e "01/09 14:08" — não reinterpretados), Situação, e as três
+ * colunas de diferença (podem ser nulas, como na fonte).
+ */
+export const fechamentoCaixa = pgTable(
+  "fechamento_caixa",
+  {
+    ...colunasComuns(),
+    caixa: text("caixa").notNull(),
+    movimento: text("movimento").notNull(),
+    abertura: text("abertura"),
+    fechamento: text("fechamento"),
+    operador: text("operador"),
+    situacao: text("situacao"),
+    difFechamento: numeric("dif_fechamento", { precision: 14, scale: 2 }),
+    difConciliacao: numeric("dif_conciliacao", { precision: 14, scale: 2 }),
+    difTotal: numeric("dif_total", { precision: 14, scale: 2 }),
+  },
+  (table) => [
+    unique("fechamento_caixa_chave").on(table.unidadeId, table.data, table.caixa, table.movimento),
+  ]
+);
+
+/**
+ * Troco. `data` armazena a data real do lançamento na semana (planejamento:
+ * "utilizar as datas reais da semana", sem tolerância inventada).
+ *
+ * Preserva os DOIS valores da fonte — troco conferido pelo gerente e
+ * troco informado pelo colaborador — mais a diferença entre eles
+ * (recalculada como conferido - informado; a fonte real tem a fórmula
+ * sem resultado cacheado na maioria das linhas — decisão do usuário:
+ * recalcular, não rejeitar).
+ *
+ * `operador` e `plano_de_acao` preservados (existem na fonte real, sem
+ * motivo para excluir). Chave bate exatamente com `chaveTroco` do
+ * painel HTML atual: filial + data + caixa.
+ */
+export const troco = pgTable(
+  "troco",
+  {
+    ...colunasComuns(),
+    caixa: text("caixa").notNull(),
+    trocoConferidoGerente: numeric("troco_conferido_gerente", { precision: 14, scale: 2 }).notNull(),
+    trocoInformadoColaborador: numeric("troco_informado_colaborador", { precision: 14, scale: 2 }).notNull(),
+    diferenca: numeric("diferenca", { precision: 14, scale: 2 }).notNull(),
+    operador: text("operador"),
+    planoDeAcao: text("plano_de_acao"),
+  },
+  (table) => [unique("troco_chave").on(table.unidadeId, table.data, table.caixa)]
+);
+
+/**
+ * Retirada Depósito. Fonte oficial: `Retirada Depósito.xlsx`, somente
+ * linhas com `motivo = "DEPOSITO"` (filtro mantido — confirmado). Chave
+ * bate exatamente com `chaveRetirada` do painel HTML atual: filial +
+ * data + caixa + motivo + motivo_descricao + usuario + usuario_autorizador
+ * (valor deliberadamente fora da chave — uma correção de valor atualiza
+ * o registro em vez de duplicar).
+ */
+export const retiradaDeposito = pgTable(
+  "retirada_deposito",
+  {
+    ...colunasComuns(),
+    valor: numeric("valor", { precision: 14, scale: 2 }).notNull(),
+    caixa: text("caixa").notNull(),
+    motivo: text("motivo").notNull(),
+    motivoDescricao: text("motivo_descricao").notNull().default(""),
+    usuario: text("usuario").notNull().default(""),
+    usuarioAutorizador: text("usuario_autorizador").notNull().default(""),
+  },
+  (table) => [
+    unique("retirada_deposito_chave").on(
+      table.unidadeId,
+      table.data,
+      table.caixa,
+      table.motivo,
+      table.motivoDescricao,
+      table.usuario,
+      table.usuarioAutorizador
+    ),
+  ]
+);
+
+/**
+ * Quebra de Caixa. `fontePeriodoId` aponta para a aba resolvida
+ * (planejamento v2, item 2) — resolvedor independente do de Conferência,
+ * mesmo quando os períodos coincidem. Chave bate exatamente com
+ * `chaveQuebraConf` do painel HTML atual: filial + data + conferente +
+ * operador + cpf + motivo — o VALOR da quebra nunca entra na chave (uma
+ * correção de valor atualiza o registro, não duplica).
+ */
+export const quebraCaixa = pgTable(
+  "quebra_caixa",
+  {
+    ...colunasComuns(),
+    valor: numeric("valor", { precision: 14, scale: 2 }).notNull(),
+    conferente: text("conferente").notNull().default(""),
+    operador: text("operador").notNull().default(""),
+    cpf: text("cpf").notNull().default(""),
+    motivo: text("motivo").notNull().default(""),
+    fontePeriodoId: uuid("fonte_periodo_id")
+      .notNull()
+      .references(() => fontesPorPeriodo.id),
+  },
+  (table) => [
+    unique("quebra_caixa_chave").on(
+      table.unidadeId,
+      table.data,
+      table.conferente,
+      table.operador,
+      table.cpf,
+      table.motivo
+    ),
   ]
 );

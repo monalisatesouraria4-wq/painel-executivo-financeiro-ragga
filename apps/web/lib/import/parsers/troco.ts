@@ -24,9 +24,16 @@ import type { ResultadoParse, RegistroBase } from "../tipos";
  * gerente (por ser a validação formal), com o informado pelo
  * colaborador preservado em `extras`.
  *
- * Colunas "OPERADOR" e "PLANO DE AÇÃO" existem na fonte real mas não têm
- * campo correspondente no schema aprovado (`troco`) — não persistidas,
- * sinalizado em docs/regras-negocio.md.
+ * Colunas "OPERADOR" e "PLANO DE AÇÃO" (Etapa 6): preservadas em
+ * `extras` — existem na fonte real (Operador preenchido em 92,6% das
+ * linhas reais, Plano de Ação em 0,5%) e o usuário confirmou não haver
+ * motivo para descartá-las.
+ *
+ * Correção de digitação (Etapa 6, confirmada pelo usuário — normalização
+ * de dado, não regra de negócio nova): o valor de Caixa `"DELIVERUY
+ * DIURNO"` (erro de digitação real, confirmado na fonte) é normalizado
+ * para `"DELIVERY DIURNO"`, replicando a mesma correção já aplicada pelo
+ * painel HTML atual.
  */
 export function parseTroco(cabecalho: unknown[], linhas: unknown[][]): ResultadoParse {
   const idxLoja = localizarColuna(cabecalho, "LOJA");
@@ -35,6 +42,8 @@ export function parseTroco(cabecalho: unknown[], linhas: unknown[][]): Resultado
   const idxConferido = localizarColuna(cabecalho, "TROCO CONFERIDO");
   const idxInformado = localizarColuna(cabecalho, "TROCO  INFORMADO"); // header real tem 2 espaços aqui
   const idxInformadoAlt = localizarColuna(cabecalho, "TROCO INFORMADO"); // fallback com 1 espaço
+  const idxOperador = localizarColuna(cabecalho, "OPERADOR");
+  const idxPlanoAcao = localizarColuna(cabecalho, "PLANO DE ACAO");
 
   const resultado: ResultadoParse = { registros: [], rejeitados: [] };
 
@@ -65,11 +74,12 @@ export function parseTroco(cabecalho: unknown[], linhas: unknown[][]): Resultado
       return;
     }
 
-    const caixa = parseTextoCelula(linha[idxCaixa]);
+    let caixa = parseTextoCelula(linha[idxCaixa]);
     if (!caixa) {
       resultado.rejeitados.push({ linhaOrigem, motivo: "Caixa vazio", valoresBrutos });
       return;
     }
+    if (caixa.toUpperCase() === "DELIVERUY DIURNO") caixa = "DELIVERY DIURNO";
 
     const conferido = parseValorCelula(linha[idxConferido]);
     if (conferido === null) {
@@ -103,6 +113,8 @@ export function parseTroco(cabecalho: unknown[], linhas: unknown[][]): Resultado
         trocoConferidoGerente: String(conferido),
         trocoInformadoColaborador: String(informado),
         diferenca: String(diferenca),
+        operador: idxOperador >= 0 ? parseTextoCelula(linha[idxOperador]) : "",
+        plano_de_acao: idxPlanoAcao >= 0 ? parseTextoCelula(linha[idxPlanoAcao]) : "",
       },
       linhaOrigem,
     };

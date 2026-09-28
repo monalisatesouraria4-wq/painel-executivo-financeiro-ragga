@@ -13,6 +13,11 @@ import type { ResultadoParse } from "../tipos";
  * (a partir da linha 5) da aba já resolvida por resolverAba
  * (lib/rules/resolverAba.ts) — nunca lê a planilha inteira nem mistura
  * abas de períodos diferentes.
+ *
+ * `conferente`, `operador`, `cpf` e `motivo` entram na chave de upsert
+ * (Etapa 6 — confirmado no painel HTML atual, `chaveQuebraConf`); o
+ * VALOR da quebra nunca entra na chave. Os nomes em `extras` batem
+ * exatamente com `CHAVES_POR_BASE.quebra_caixa` (lib/rules/chaves.ts).
  */
 export function parseQuebraCaixa(cabecalho: unknown[], linhas: unknown[][]): ResultadoParse {
   const idxData = localizarColuna(cabecalho, "DATA");
@@ -21,6 +26,7 @@ export function parseQuebraCaixa(cabecalho: unknown[], linhas: unknown[][]): Res
   const idxOperador = localizarColuna(cabecalho, "OPERADOR");
   const idxMotivo = localizarColuna(cabecalho, "MOTIVO");
   const idxConferente = localizarColuna(cabecalho, "CONFERENTE");
+  const idxCpf = localizarColuna(cabecalho, "CPF");
 
   const resultado: ResultadoParse = { registros: [], rejeitados: [] };
 
@@ -73,6 +79,7 @@ export function parseQuebraCaixa(cabecalho: unknown[], linhas: unknown[][]): Res
         operador: idxOperador >= 0 ? parseTextoCelula(linha[idxOperador]) : "",
         motivo: idxMotivo >= 0 ? parseTextoCelula(linha[idxMotivo]) : "",
         conferente: idxConferente >= 0 ? parseTextoCelula(linha[idxConferente]) : "",
+        cpf: idxCpf >= 0 ? parseTextoCelula(linha[idxCpf]) : "",
       },
       linhaOrigem,
     });

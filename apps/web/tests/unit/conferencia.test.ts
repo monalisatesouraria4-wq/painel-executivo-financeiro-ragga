@@ -18,6 +18,7 @@ describe("parseConferencia — preserva o terceiro estado (X = em atraso), sem c
     expect(r.registros).toHaveLength(3);
     expect(r.registros[0].extras.qtdCadastrados).toBe("5");
     expect(r.registros[0].extras.qtdConferidos).toBe("3");
+    expect(r.registros[0].extras.respConferencia).toBe("MONALISA");
     expect(r.registros[0].extras.emAtraso).toBe("false");
   });
 
