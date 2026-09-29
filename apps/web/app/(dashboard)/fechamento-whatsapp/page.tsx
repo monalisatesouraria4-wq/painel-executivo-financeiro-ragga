@@ -1,10 +1,22 @@
-export default function Page() {
+import { Header } from "@/components/layout/Header";
+import { FechamentoWhatsappView } from "@/components/fechamentoWhatsapp/FechamentoWhatsappView";
+import { buscarFechamentoWhatsapp } from "@/lib/services/fechamentoWhatsapp.server";
+
+const formatadorDataBR = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
+
+/**
+ * Reprodução funcional de "Fechamento WhatsApp" do painel legado
+ * (`renderWhatsapp`/`computeWhatsappReport`, ver auditoria funcional).
+ */
+export const dynamic = "force-dynamic";
+
+export default async function FechamentoWhatsappPage() {
+  const dataInicial = new Date();
+  const dadosIniciais = await buscarFechamentoWhatsapp(formatadorDataBR.format(dataInicial), dataInicial);
   return (
-    <main className="flex flex-1 flex-col px-6 py-16">
-      <h1 className="text-2xl font-semibold text-ragga-blue-dark">Fechamento WhatsApp</h1>
-      <p className="mt-2 text-foreground/60">
-        Módulo em construção (estrutura da Etapa 1). Implementação completa nas próximas etapas.
-      </p>
-    </main>
+    <>
+      <Header titulo="Fechamento WhatsApp" />
+      <FechamentoWhatsappView dadosIniciais={dadosIniciais} />
+    </>
   );
 }

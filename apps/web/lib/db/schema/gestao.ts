@@ -30,6 +30,7 @@ export const tratativas = pgTable("tratativas", {
     .notNull()
     .references(() => unidades.id),
   indicador: text("indicador").notNull(),
+  dataOcorrencia: date("data_ocorrencia", { mode: "date" }),
   problema: text("problema").notNull(),
   evidenciaUrl: text("evidencia_url"),
   acao: text("acao").notNull(),

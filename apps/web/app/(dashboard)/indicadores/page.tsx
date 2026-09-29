@@ -1,10 +1,30 @@
-export default function Page() {
+import { Header } from "@/components/layout/Header";
+import { IndicadoresTabs } from "@/components/indicadores/IndicadoresTabs";
+import type { FonteIndicador, IndicadorData } from "@/lib/services/indicadores";
+import { buscarIndicador } from "@/lib/services/indicadores.server";
+
+/**
+ * Reprodução funcional de "Indicadores" do painel legado
+ * (`createIndicatorController`/`render()`, ver auditoria funcional):
+ * sub-abas Brindes / Cancelamento Salão / Cancelamento Delivery, filtro
+ * de período (Dia/Semana/Mês/Personalizado), filtro de loja, KPIs,
+ * tabela por Motivo (com Submotivo em Brindes) e tabela "Por unidade".
+ */
+export const dynamic = "force-dynamic";
+
+export default async function IndicadoresPage() {
+  const dataInicial = new Date();
+  const fontes: FonteIndicador[] = ["brindes", "cancelamentoSalao", "cancelamentoDelivery"];
+  const resultados = await Promise.all(fontes.map((f) => buscarIndicador(f, dataInicial)));
+
+  const dadosPorFonte = Object.fromEntries(
+    resultados.map((d) => [d.fonte, d])
+  ) as Record<FonteIndicador, IndicadorData>;
+
   return (
-    <main className="flex flex-1 flex-col px-6 py-16">
-      <h1 className="text-2xl font-semibold text-ragga-blue-dark">Indicadores</h1>
-      <p className="mt-2 text-foreground/60">
-        Módulo em construção (estrutura da Etapa 1). Implementação completa nas próximas etapas.
-      </p>
-    </main>
+    <>
+      <Header titulo="Indicadores" />
+      <IndicadoresTabs dadosPorFonte={dadosPorFonte} dataInicial={dataInicial} />
+    </>
   );
 }

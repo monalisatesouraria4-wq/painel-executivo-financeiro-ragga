@@ -14,7 +14,7 @@ export interface ResultadoGravacaoSimulada {
   totalFinal: number;
 }
 
-function chaveDoRegistro(registro: RegistroBase, camposChave: readonly string[]): string {
+export function chaveDoRegistro(registro: RegistroBase, camposChave: readonly string[]): string {
   const partes = camposChave.map((campo) => {
     if (campo === "unidade_id") return registro.unidade;
     if (campo === "data") return registro.data.toISOString().slice(0, 10);

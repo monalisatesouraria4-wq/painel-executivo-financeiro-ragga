@@ -21,3 +21,25 @@ export function dataDeDeposito(dataMovimento: Date): Date {
   d.setUTCDate(d.getUTCDate() + diasAteSegunda);
   return d;
 }
+
+/**
+ * Início do ciclo de depósito que contém `data` — porta fiel de
+ * `getCicloInfo` do painel legado (auditoria funcional, Retiradas):
+ * segunda(1) a quinta(4) -> início é a segunda-feira da mesma semana;
+ * sexta(5) -> início é a própria sexta; sábado(6)/domingo(0) -> início é
+ * a sexta anterior. Mesma regra semanal de `dataDeDeposito`, não uma
+ * regra nova — só devolve a outra ponta (início, não o dia do depósito).
+ */
+export function inicioCicloDeposito(data: Date): Date {
+  const diaSemana = data.getUTCDay();
+  const d = new Date(data.getTime());
+
+  if (diaSemana >= 1 && diaSemana <= 4) {
+    d.setUTCDate(d.getUTCDate() - (diaSemana - 1));
+    return d;
+  }
+
+  const diasDesdeSexta = diaSemana === 5 ? 0 : diaSemana === 6 ? 1 : 2;
+  d.setUTCDate(d.getUTCDate() - diasDesdeSexta);
+  return d;
+}

@@ -1,11 +1,19 @@
-export default function Page() {
+import { Header } from "@/components/layout/Header";
+import { AtualizacaoBasesView } from "@/components/atualizacao/AtualizacaoBasesView";
+
+/**
+ * Reprodução funcional de "Atualização de Bases" do painel legado
+ * (`renderBaseUpdatePanel` + os 10 modais dedicados, ver auditoria
+ * funcional). Rota mantida em `/importacao` (já existente desde a
+ * Etapa 1 de fundação do projeto, já ligada à navegação) — o legado usa
+ * `data-tab="atualizacao"`, mesma tela, rota diferente por já existir no
+ * novo sistema antes deste módulo.
+ */
+export default function ImportacaoPage() {
   return (
-    <main className="flex flex-1 flex-col px-6 py-16">
-      <h1 className="text-2xl font-semibold text-ragga-blue-dark">Importação</h1>
-      <p className="mt-2 text-foreground/60">
-        Módulo em construção (estrutura da Etapa 1). Nenhuma importação de dados reais
-        ocorre nesta etapa.
-      </p>
-    </main>
+    <>
+      <Header titulo="Atualização de Bases" />
+      <AtualizacaoBasesView />
+    </>
   );
 }

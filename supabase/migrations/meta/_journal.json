@@ -15,6 +15,13 @@
       "when": 1790563206633,
       "tag": "0001_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790697939208,
+      "tag": "0002_lonely_zaran",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "tratativas" ADD COLUMN "data_ocorrencia" date;
