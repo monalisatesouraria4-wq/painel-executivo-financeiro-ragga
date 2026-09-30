@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { FiltroDataReferencia, paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import { buildWhatsappText, type FechamentoWhatsappData } from "@/lib/services/fechamentoWhatsapp";
 import { buscarFechamentoWhatsappPorData } from "@/lib/actions/buscarFechamentoWhatsappPorData";
+import { gerarImagemRelatorio, baixarImagem } from "./gerarImagemRelatorio";
 
 /**
  * Reproduz `renderWhatsapp`/`initWhatsappControls` (legado, linhas
@@ -12,9 +13,11 @@ import { buscarFechamentoWhatsappPorData } from "@/lib/actions/buscarFechamentoW
  * faturamento", botão "Copiar texto", campo livre "Tratativas
  * realizadas" (nunca persistido — igual ao legado).
  *
- * "Gerar imagem" (html2canvas sobre um template com os mesmos números)
- * não está implementado nesta etapa — fica desabilitado com a
- * dependência documentada.
+ * "Gerar imagem": desenha em `<canvas>` (`gerarImagemRelatorio.ts`,
+ * API nativa do navegador, sem dependência nova) exatamente os mesmos
+ * dados/valores do texto acima (`dados.report`) — formato vertical,
+ * fundo branco, identidade azul do painel, pronta para baixar/enviar
+ * pelo WhatsApp.
  */
 export function FechamentoWhatsappView({ dadosIniciais }: { dadosIniciais: FechamentoWhatsappData }) {
   const [dataSelecionada, setDataSelecionada] = useState(() => paraInputDate(new Date()));
@@ -22,6 +25,8 @@ export function FechamentoWhatsappView({ dadosIniciais }: { dadosIniciais: Fecha
   const [tratativas, setTratativas] = useState("");
   const [copiado, setCopiado] = useState(false);
   const [pendente, iniciarTransicao] = useTransition();
+  const [gerandoImagem, setGerandoImagem] = useState(false);
+  const [erroImagem, setErroImagem] = useState<string | null>(null);
 
   function alterarData(novaData: string) {
     setDataSelecionada(novaData);
@@ -41,6 +46,20 @@ export function FechamentoWhatsappView({ dadosIniciais }: { dadosIniciais: Fecha
     } catch {
       // Sem permissão de clipboard — sem fallback de execCommand (API
       // deprecada); o texto já está disponível para seleção manual na UI.
+    }
+  }
+
+  async function gerarImagem() {
+    if (!dados.report) return;
+    setErroImagem(null);
+    setGerandoImagem(true);
+    try {
+      const blob = await gerarImagemRelatorio(dados.report, tratativas);
+      baixarImagem(blob, dados.dateStr);
+    } catch (err) {
+      setErroImagem(err instanceof Error ? err.message : "Falha ao gerar a imagem.");
+    } finally {
+      setGerandoImagem(false);
     }
   }
 
@@ -106,12 +125,13 @@ export function FechamentoWhatsappView({ dadosIniciais }: { dadosIniciais: Fecha
           />
           <button
             type="button"
-            disabled
-            title="Geração de imagem ainda não implementada"
-            className="mt-4 rounded-md bg-foreground/20 px-4 py-2 text-sm font-medium text-white cursor-not-allowed"
+            onClick={gerarImagem}
+            disabled={!dados.report || gerandoImagem}
+            className="mt-4 rounded-md bg-ragga-blue px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-ragga-blue-dark disabled:cursor-not-allowed disabled:bg-foreground/20"
           >
-            🖼️ Gerar imagem
+            🖼️ {gerandoImagem ? "Gerando..." : "Gerar imagem"}
           </button>
+          {erroImagem && <p className="mt-2 text-xs text-semaforo-vermelho">{erroImagem}</p>}
         </Card>
       </div>
     </main>
