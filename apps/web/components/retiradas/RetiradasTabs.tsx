@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { RetiradaDepositoTab } from "./RetiradaDepositoTab";
 import { IndicadorPainel } from "@/components/indicadores/IndicadorPainel";
 import { FiltroDataReferencia, paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
+import { dataDMenos1 } from "@/lib/rules/datas";
 import type { RetiradaDepositoDiaData } from "@/lib/services/retiradaDeposito";
 import type { IndicadorData } from "@/lib/services/indicadores";
 import { buscarRetiradaDepositoDiaPorData } from "@/lib/actions/buscarRetiradaDepositoDiaPorData";
@@ -75,7 +76,9 @@ export function RetiradasTabs({
 
       <div className="px-6 py-6">
         {subAtiva === "deposito" && <RetiradaDepositoTab dadosDia={dadosDeposito} />}
-        {subAtiva === "compradireta" && <IndicadorPainel dados={dadosCompraDireta} />}
+        {subAtiva === "compradireta" && (
+          <IndicadorPainel dados={dadosCompraDireta} dataOcorrencia={dataDMenos1(dataDoInput(dataSelecionada))} />
+        )}
       </div>
     </div>
   );

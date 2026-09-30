@@ -90,6 +90,8 @@ export interface FilialIndicadorLinha {
   faturamento: number;
   percentualFaturamento: number;
   semaforo: CorSemaforo;
+  /** Motivo de maior valor para essa loja (mesma janela D-1) — usado só para abrir a orientação correspondente na coluna Plano de Ação. */
+  motivoPrincipal: string | null;
 }
 
 export interface IndicadorData {

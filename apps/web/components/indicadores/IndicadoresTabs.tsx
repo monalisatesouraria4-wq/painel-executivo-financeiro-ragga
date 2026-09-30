@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { IndicadorPainel } from "./IndicadorPainel";
 import { FiltroDataReferencia, paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
+import { dataDMenos1 } from "@/lib/rules/datas";
 import { FONTES_INDICADOR, type FonteIndicador, type IndicadorData } from "@/lib/services/indicadores";
 import { buscarIndicadorPorData } from "@/lib/actions/buscarIndicadorPorData";
 
@@ -61,7 +62,7 @@ export function IndicadoresTabs({
       </div>
 
       <div className="px-6 py-6">
-        <IndicadorPainel dados={dados[fonteAtiva]} />
+        <IndicadorPainel dados={dados[fonteAtiva]} dataOcorrencia={dataDMenos1(dataDoInput(dataSelecionada))} />
       </div>
     </div>
   );

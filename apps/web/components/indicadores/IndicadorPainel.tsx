@@ -4,7 +4,8 @@ import { Fragment, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { EstadoVazio } from "@/components/ui/EstadoVazio";
 import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
-import type { CorSemaforo } from "@/lib/rules/semaforos";
+import { PlanoAcaoCelula } from "./PlanoAcaoCelula";
+import type { CorSemaforo, FaixaSemaforo } from "@/lib/rules/semaforos";
 import type { IndicadorData, ModoPeriodo } from "@/lib/services/indicadores";
 import { UNIDADES } from "@painel/shared";
 
@@ -18,6 +19,25 @@ const TEXTO_SEMAFORO: Record<CorSemaforo, string> = {
 
 const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const formatadorPercentual = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/**
+ * Legenda visual de semáforo (item 3 da etapa de revisão). As cores/faixas
+ * vêm de `config.faixas` (os MESMOS limites já usados por
+ * `classificarSemaforo`); o texto exato de cada faixa é o mesmo
+ * `config.semaforoLegend` já existente e usado logo abaixo dos KPIs —
+ * nenhum número novo, só uma repetição visual em badges coloridos.
+ */
+function LegendaSemaforo({ faixas, legendaTexto }: { faixas: FaixaSemaforo[]; legendaTexto: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+      <span className="font-medium">🎯 Meta / Semáforo:</span>
+      {faixas.map((f) => (
+        <SemaforoBadge key={f.cor} cor={f.cor} texto={TEXTO_SEMAFORO[f.cor]} />
+      ))}
+      <span className="text-foreground/40">({legendaTexto})</span>
+    </div>
+  );
+}
 
 const MODOS_PERIODO: { id: ModoPeriodo; nome: string }[] = [
   { id: "dia", nome: "Dia" },
@@ -36,7 +56,7 @@ const MODOS_PERIODO: { id: ModoPeriodo; nome: string }[] = [
  * exatamente como o legado reaproveita a mesma fábrica
  * `createIndicatorController` para as duas telas.
  */
-export function IndicadorPainel({ dados }: { dados: IndicadorData }) {
+export function IndicadorPainel({ dados, dataOcorrencia }: { dados: IndicadorData; dataOcorrencia?: Date | null }) {
   const [modoPeriodo, setModoPeriodo] = useState<ModoPeriodo>("dia");
   const [lojaFiltro, setLojaFiltro] = useState<string>("TODAS");
   const [motivosExpandidos, setMotivosExpandidos] = useState<Set<string>>(new Set());
@@ -84,6 +104,8 @@ export function IndicadorPainel({ dados }: { dados: IndicadorData }) {
           ))}
         </select>
       </div>
+
+      <LegendaSemaforo faixas={config.faixas} legendaTexto={config.semaforoLegend} />
 
       {!dados.conectado && (
         <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
@@ -208,7 +230,16 @@ export function IndicadorPainel({ dados }: { dados: IndicadorData }) {
                     <td className="px-4 py-2">
                       <SemaforoBadge cor={linha.semaforo} texto={TEXTO_SEMAFORO[linha.semaforo]} />
                     </td>
-                    <td className="px-4 py-2 text-foreground/40">—</td>
+                    <td className="px-4 py-2">
+                      <PlanoAcaoCelula
+                        indicador={config.label}
+                        unidade={linha.unidade}
+                        motivo={linha.motivoPrincipal}
+                        valor={linha.valor}
+                        percentualFaturamento={linha.percentualFaturamento}
+                        dataOcorrencia={dataOcorrencia ?? null}
+                      />
+                    </td>
                   </tr>
                 ))
               )}

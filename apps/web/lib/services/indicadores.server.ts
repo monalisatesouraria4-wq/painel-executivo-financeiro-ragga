@@ -107,7 +107,7 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
   }));
 
   // Tabela "Por unidade" — ordem canônica de UNIDADES, nunca por valor.
-  const [porFilialRows, faturamentoPorLojaRows] = await Promise.all([
+  const [porFilialRows, faturamentoPorLojaRows, porFilialMotivoRows] = await Promise.all([
     db
       .select({ codigo: unidades.codigo, total: sql<string>`sum(${tabela.valor})` })
       .from(tabela)
@@ -120,10 +120,29 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
       .innerJoin(unidades, eq(faturamento.unidadeId, unidades.id))
       .where(eq(faturamento.data, d1))
       .groupBy(unidades.codigo),
+    // Loja × motivo (mesma janela D-1) — só para saber qual motivo abrir na coluna Plano de
+    // Ação (item 2 da etapa de revisão); não altera valor/percentual/semáforo já calculados.
+    db
+      .select({ codigo: unidades.codigo, motivo: tabela.motivo, total: sql<string>`sum(${tabela.valor})` })
+      .from(tabela)
+      .innerJoin(unidades, eq(tabela.unidadeId, unidades.id))
+      .where(eq(tabela.data, d1))
+      .groupBy(unidades.codigo, tabela.motivo),
   ]);
 
   const valorPorLoja = new Map(porFilialRows.map((r) => [r.codigo, Number(r.total)]));
   const faturamentoPorLoja = new Map(faturamentoPorLojaRows.map((r) => [r.codigo, Number(r.total)]));
+
+  const motivoPrincipalPorLoja = new Map<string, string>();
+  const maiorValorMotivoPorLoja = new Map<string, number>();
+  for (const r of porFilialMotivoRows) {
+    const total = Number(r.total);
+    const atual = maiorValorMotivoPorLoja.get(r.codigo) ?? -Infinity;
+    if (total > atual) {
+      maiorValorMotivoPorLoja.set(r.codigo, total);
+      motivoPrincipalPorLoja.set(r.codigo, r.motivo);
+    }
+  }
 
   const porFilial: FilialIndicadorLinha[] = UNIDADES.filter((u) => valorPorLoja.has(u)).map((unidade) => {
     const valor = valorPorLoja.get(unidade) ?? 0;
@@ -135,6 +154,7 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
       faturamento: fatLoja,
       percentualFaturamento: percentualLoja,
       semaforo: classificarSemaforo(percentualLoja, config.faixas),
+      motivoPrincipal: motivoPrincipalPorLoja.get(unidade) ?? null,
     };
   });
 

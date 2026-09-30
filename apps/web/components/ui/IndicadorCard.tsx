@@ -4,6 +4,8 @@ import type { CorSemaforo } from "@/lib/rules/semaforos";
 
 const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const formatadorPercentual = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 });
+// timeZone: "UTC" — datas desta camada são "puras" (meia-noite UTC), mesmo padrão já usado em outras telas.
+const formatadorData = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
 
 interface IndicadorCardProps {
   titulo: string;
@@ -13,6 +15,10 @@ interface IndicadorCardProps {
   semaforo?: CorSemaforo;
   textoSemaforo?: string;
   observacao?: string;
+  /** Data real do registro mostrado (item 4/5 da etapa de revisão — nunca esconder de qual data veio o valor). */
+  dataRegistro?: Date;
+  /** true = D-1 não tinha dado; este é o último registro real disponível daquele indicador. */
+  ultimoRegistroDisponivel?: boolean;
 }
 
 const TEXTO_SEMAFORO: Record<CorSemaforo, string> = {
@@ -30,6 +36,8 @@ export function IndicadorCard({
   semaforo,
   textoSemaforo,
   observacao,
+  dataRegistro,
+  ultimoRegistroDisponivel,
 }: IndicadorCardProps) {
   return (
     <Card>
@@ -47,6 +55,11 @@ export function IndicadorCard({
             )}
             {semaforo && <SemaforoBadge cor={semaforo} texto={textoSemaforo ?? TEXTO_SEMAFORO[semaforo]} />}
           </div>
+          {dataRegistro && (
+            <p className="mt-1 text-xs text-foreground/50">
+              {ultimoRegistroDisponivel ? `Último registro: ${formatadorData.format(dataRegistro)}` : formatadorData.format(dataRegistro)}
+            </p>
+          )}
         </>
       ) : (
         <>

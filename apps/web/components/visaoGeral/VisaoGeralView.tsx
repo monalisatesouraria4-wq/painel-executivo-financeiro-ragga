@@ -11,6 +11,10 @@ import type { VisaoGeralData, IndicadorComSemaforo } from "@/lib/services/visaoG
 import { buscarVisaoGeralPorData } from "@/lib/actions/buscarVisaoGeralPorData";
 
 const formatadorData = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+// timeZone: "UTC" — `dataRegistro` vem do banco como data "pura" (meia-noite UTC); sem fixar
+// o fuso aqui o navegador poderia exibir o dia anterior dependendo do fuso local do cliente
+// (mesmo cuidado já aplicado em outras telas, ex.: ConferenciaTab.tsx).
+const formatadorDataRegistro = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
 const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const formatadorPercentual = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -87,11 +91,16 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
           Faturamento do dia (D-1 de {formatadorData.format(dados.dataReferencia)})
         </p>
         {dados.faturamento.disponivel ? (
-          <p className="mt-1 text-4xl font-bold">{formatadorMoeda.format(dados.faturamento.valor ?? 0)}</p>
+          <>
+            <p className="mt-1 text-4xl font-bold">{formatadorMoeda.format(dados.faturamento.valor ?? 0)}</p>
+            {dados.faturamento.ultimoRegistroDisponivel && dados.faturamento.dataRegistro && (
+              <p className="mt-1 text-xs text-white/70">Último registro: {formatadorDataRegistro.format(dados.faturamento.dataRegistro)}</p>
+            )}
+          </>
         ) : (
           <>
             <p className="mt-1 text-4xl font-bold text-white/40">—</p>
-            <p className="mt-1 text-xs text-white/70">Sem dados para esta referência</p>
+            <p className="mt-1 text-xs text-white/70">{dados.conectado ? "Sem dados disponíveis" : "Sem dados para esta referência"}</p>
           </>
         )}
       </div>
@@ -151,9 +160,17 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
       <section>
         <h2 className="mb-2 text-sm font-semibold text-ragga-blue-dark">Indicadores</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <IndicadorCard titulo="Brindes" {...dados.brindes} />
-          <IndicadorCard titulo="Cancelamento Salão" {...dados.cancelamentoSalao} />
-          <IndicadorCard titulo="Cancelamento Delivery" {...dados.cancelamentoDelivery} />
+          <IndicadorCard titulo="Brindes" {...dados.brindes} observacao={dados.conectado ? "Sem dados disponíveis" : undefined} />
+          <IndicadorCard
+            titulo="Cancelamento Salão"
+            {...dados.cancelamentoSalao}
+            observacao={dados.conectado ? "Sem dados disponíveis" : undefined}
+          />
+          <IndicadorCard
+            titulo="Cancelamento Delivery"
+            {...dados.cancelamentoDelivery}
+            observacao={dados.conectado ? "Sem dados disponíveis" : undefined}
+          />
         </div>
       </section>
 
@@ -161,19 +178,34 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
       <section>
         <h2 className="mb-2 text-sm font-semibold text-ragga-blue-dark">Retiradas</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <IndicadorCard titulo="Retirada Compra Direta" {...dados.retiradaCompraDireta} />
+          <IndicadorCard
+            titulo="Retirada Compra Direta"
+            {...dados.retiradaCompraDireta}
+            observacao={dados.conectado ? "Sem dados disponíveis" : undefined}
+          />
           <Card>
             <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">
               Retirada p/ Depósito
             </p>
             {dados.retiradaDeposito.disponivel ? (
-              <p className="mt-1 text-2xl font-semibold text-ragga-blue-dark">
-                {formatadorMoeda.format(dados.retiradaDeposito.valorDia ?? 0)}
-              </p>
+              <>
+                <p className="mt-1 text-2xl font-semibold text-ragga-blue-dark">
+                  {formatadorMoeda.format(dados.retiradaDeposito.valorDia ?? 0)}
+                </p>
+                {dados.retiradaDeposito.dataRegistro && (
+                  <p className="mt-1 text-xs text-foreground/50">
+                    {dados.retiradaDeposito.ultimoRegistroDisponivel
+                      ? `Último registro: ${formatadorDataRegistro.format(dados.retiradaDeposito.dataRegistro)}`
+                      : formatadorDataRegistro.format(dados.retiradaDeposito.dataRegistro)}
+                  </p>
+                )}
+              </>
             ) : (
               <>
                 <p className="mt-1 text-2xl font-semibold text-foreground/30">—</p>
-                <p className="mt-2 text-xs text-foreground/50">Sem dados para esta referência</p>
+                <p className="mt-2 text-xs text-foreground/50">
+                  {dados.conectado ? "Sem dados disponíveis" : "Sem dados para esta referência"}
+                </p>
               </>
             )}
           </Card>

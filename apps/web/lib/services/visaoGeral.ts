@@ -37,11 +37,17 @@ export interface IndicadorComSemaforo {
   valor?: number;
   percentualFaturamento?: number;
   semaforo?: CorSemaforo;
+  /** Data real do registro usado (pode ser diferente de D-1 quando `ultimoRegistroDisponivel` é true). */
+  dataRegistro?: Date;
+  /** true = não havia dado em D-1; mostrando o último registro real disponível daquele indicador. */
+  ultimoRegistroDisponivel?: boolean;
 }
 
 export interface IndicadorSimples {
   disponivel: boolean;
   valor?: number;
+  dataRegistro?: Date;
+  ultimoRegistroDisponivel?: boolean;
 }
 
 export interface LinhaDetalhamentoLoja {
@@ -66,6 +72,8 @@ export interface VisaoGeralData {
     disponivel: boolean;
     valorDia?: number;
     acumuladoCiclo?: number;
+    dataRegistro?: Date;
+    ultimoRegistroDisponivel?: boolean;
   };
   fechamento: { disponivel: boolean; caixasAbertos?: number };
   pdvMaquininha: { disponivel: boolean; diferenca?: number };
@@ -83,13 +91,15 @@ function indisponivel(): IndicadorComSemaforo {
 export function comSemaforo(
   valor: number,
   percentualFaturamento: number,
-  faixas: Parameters<typeof classificarSemaforo>[1]
+  faixas: Parameters<typeof classificarSemaforo>[1],
+  opts?: { dataRegistro?: Date; ultimoRegistroDisponivel?: boolean }
 ): IndicadorComSemaforo {
   return {
     disponivel: true,
     valor,
     percentualFaturamento,
     semaforo: classificarSemaforo(percentualFaturamento, faixas),
+    ...opts,
   };
 }
 
@@ -113,6 +123,53 @@ function totalDoMapa(mapa: Map<string, number>): number {
   let total = 0;
   for (const v of mapa.values()) total += v;
   return total;
+}
+
+interface ResultadoComFallback {
+  porLoja: Map<string, number>;
+  total: number;
+  dataRegistro: Date | null;
+  ultimoRegistroDisponivel: boolean;
+}
+
+/** Compara só a data (ano/mês/dia em UTC), ignorando hora — evita marcar como "fallback" um registro que já é exatamente a data de referência. */
+function mesmoDiaUTC(a: Date, b: Date): boolean {
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+}
+
+/**
+ * Card da Visão Geral com fallback honesto (item 4 da etapa de revisão):
+ * recebe o mapa por loja JÁ CONSULTADO em D-1 (mesma consulta reaproveitada
+ * pela tabela "Detalhamento por loja", que continua só em D-1, sem
+ * fallback); se esse mapa vier vazio, procura a data mais recente com
+ * QUALQUER registro na tabela inteira e usa essa data, marcando
+ * `ultimoRegistroDisponivel` — nunca inventa valor nem transforma
+ * ausência em zero; se a tabela estiver genuinamente vazia, `dataRegistro`
+ * fica `null` e `disponivel` continua `false`.
+ */
+async function fallbackSeVazio(
+  db: ReturnType<typeof getDb>,
+  tabela: typeof brindes | typeof cancelamentoSalao | typeof cancelamentoDelivery | typeof compraDireta | typeof faturamento,
+  d1Map: Map<string, number>,
+  d1: Date
+): Promise<ResultadoComFallback> {
+  if (d1Map.size > 0) {
+    return { porLoja: d1Map, total: totalDoMapa(d1Map), dataRegistro: d1, ultimoRegistroDisponivel: false };
+  }
+
+  const [{ maxData }] = await db.select({ maxData: sql<string | null>`max(${tabela.data})` }).from(tabela);
+  if (!maxData) {
+    return { porLoja: new Map(), total: 0, dataRegistro: null, ultimoRegistroDisponivel: false };
+  }
+
+  const dataFallback = new Date(maxData);
+  const porLojaFallback = await somaPorLoja(db, tabela, dataFallback);
+  return {
+    porLoja: porLojaFallback,
+    total: totalDoMapa(porLojaFallback),
+    dataRegistro: dataFallback,
+    ultimoRegistroDisponivel: !mesmoDiaUTC(dataFallback, d1),
+  };
 }
 
 export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeralData> {
@@ -171,16 +228,7 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
 
   const retiradaDepositoPorLoja = new Map(retiradaDepositoLinhas.map((l) => [l.codigo, Number(l.total)]));
 
-  const totalFaturamento = totalDoMapa(faturamentoPorLoja);
-  const totalBrindes = totalDoMapa(brindesPorLoja);
-  const totalCancSalao = totalDoMapa(cancSalaoPorLoja);
-  const totalCancDelivery = totalDoMapa(cancDeliveryPorLoja);
-  const totalCompraDireta = totalDoMapa(compraDiretaPorLoja);
   const totalRetiradaDeposito = totalDoMapa(retiradaDepositoPorLoja);
-
-  function percentual(valor: number): number {
-    return totalFaturamento > 0 ? (valor / totalFaturamento) * 100 : 0;
-  }
 
   const unidadesComDado = new Set<string>([
     ...faturamentoPorLoja.keys(),
@@ -211,23 +259,110 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
     };
   });
 
+  // --- Fallback honesto para os CARDS de topo (item 4 da etapa de revisão) ---
+  // A tabela "Detalhamento por loja" acima NÃO usa este fallback — continua
+  // só em D-1 (mapas *PorLoja originais), exatamente como antes.
+  async function faturamentoNaData(data: Date): Promise<number> {
+    const mapa = await somaPorLoja(db, faturamento, data);
+    return totalDoMapa(mapa);
+  }
+
+  const [faturamentoResultado, brindesResultado, cancSalaoResultado, cancDeliveryResultado, compraDiretaResultado] = await Promise.all([
+    fallbackSeVazio(db, faturamento, faturamentoPorLoja, d1),
+    fallbackSeVazio(db, brindes, brindesPorLoja, d1),
+    fallbackSeVazio(db, cancelamentoSalao, cancSalaoPorLoja, d1),
+    fallbackSeVazio(db, cancelamentoDelivery, cancDeliveryPorLoja, d1),
+    fallbackSeVazio(db, compraDireta, compraDiretaPorLoja, d1),
+  ]);
+
+  let retiradaDepositoResultado: ResultadoComFallback;
+  if (retiradaDepositoPorLoja.size > 0) {
+    retiradaDepositoResultado = { porLoja: retiradaDepositoPorLoja, total: totalRetiradaDeposito, dataRegistro: d1, ultimoRegistroDisponivel: false };
+  } else {
+    const [{ maxData: maxDataDeposito }] = await db
+      .select({ maxData: sql<string | null>`max(${retiradaDeposito.data})` })
+      .from(retiradaDeposito)
+      .where(eq(retiradaDeposito.motivo, "DEPÓSITO"));
+    if (!maxDataDeposito) {
+      retiradaDepositoResultado = { porLoja: new Map(), total: 0, dataRegistro: null, ultimoRegistroDisponivel: false };
+    } else {
+      const dataFallbackDeposito = new Date(maxDataDeposito);
+      const rowsFallback = await db
+        .select({ codigo: unidades.codigo, total: sql<string>`coalesce(sum(${retiradaDeposito.valor}), 0)` })
+        .from(retiradaDeposito)
+        .innerJoin(unidades, eq(retiradaDeposito.unidadeId, unidades.id))
+        .where(and(eq(retiradaDeposito.data, dataFallbackDeposito), eq(retiradaDeposito.motivo, "DEPÓSITO")))
+        .groupBy(unidades.codigo);
+      const porLojaFallback = new Map(rowsFallback.map((r) => [r.codigo, Number(r.total)]));
+      retiradaDepositoResultado = {
+        porLoja: porLojaFallback,
+        total: totalDoMapa(porLojaFallback),
+        dataRegistro: dataFallbackDeposito,
+        ultimoRegistroDisponivel: !mesmoDiaUTC(dataFallbackDeposito, d1),
+      };
+    }
+  }
+
+  /** % sobre faturamento usando o faturamento NA MESMA DATA do indicador (nunca cruza datas diferentes sem avisar). */
+  async function percentualParaIndicador(resultado: ResultadoComFallback): Promise<number> {
+    if (resultado.dataRegistro === null) return 0;
+    if (faturamentoResultado.dataRegistro && resultado.dataRegistro.getTime() === faturamentoResultado.dataRegistro.getTime()) {
+      return faturamentoResultado.total > 0 ? (resultado.total / faturamentoResultado.total) * 100 : 0;
+    }
+    const fatNaData = await faturamentoNaData(resultado.dataRegistro);
+    return fatNaData > 0 ? (resultado.total / fatNaData) * 100 : 0;
+  }
+
+  const [percentualBrindesTopo, percentualCancSalaoTopo, percentualCancDeliveryTopo, percentualCompraDiretaTopo] = await Promise.all([
+    percentualParaIndicador(brindesResultado),
+    percentualParaIndicador(cancSalaoResultado),
+    percentualParaIndicador(cancDeliveryResultado),
+    percentualParaIndicador(compraDiretaResultado),
+  ]);
+
   return {
     ...base,
-    faturamento: faturamentoPorLoja.size > 0 ? { disponivel: true, valor: totalFaturamento } : { disponivel: false },
+    faturamento: faturamentoResultado.dataRegistro
+      ? {
+          disponivel: true,
+          valor: faturamentoResultado.total,
+          dataRegistro: faturamentoResultado.dataRegistro,
+          ultimoRegistroDisponivel: faturamentoResultado.ultimoRegistroDisponivel,
+        }
+      : { disponivel: false },
     formasPagamento: formasPagamentoData,
-    brindes: brindesPorLoja.size > 0 ? comSemaforo(totalBrindes, percentual(totalBrindes), FAIXAS_BRINDES) : indisponivel(),
-    cancelamentoSalao:
-      cancSalaoPorLoja.size > 0 ? comSemaforo(totalCancSalao, percentual(totalCancSalao), FAIXAS_CANCELAMENTO) : indisponivel(),
-    cancelamentoDelivery:
-      cancDeliveryPorLoja.size > 0
-        ? comSemaforo(totalCancDelivery, percentual(totalCancDelivery), FAIXAS_CANCELAMENTO)
-        : indisponivel(),
-    retiradaCompraDireta:
-      compraDiretaPorLoja.size > 0
-        ? comSemaforo(totalCompraDireta, percentual(totalCompraDireta), FAIXAS_COMPRA_DIRETA)
-        : indisponivel(),
-    retiradaDeposito:
-      retiradaDepositoPorLoja.size > 0 ? { disponivel: true, valorDia: totalRetiradaDeposito } : { disponivel: false },
+    brindes: brindesResultado.dataRegistro
+      ? comSemaforo(brindesResultado.total, percentualBrindesTopo, FAIXAS_BRINDES, {
+          dataRegistro: brindesResultado.dataRegistro,
+          ultimoRegistroDisponivel: brindesResultado.ultimoRegistroDisponivel,
+        })
+      : indisponivel(),
+    cancelamentoSalao: cancSalaoResultado.dataRegistro
+      ? comSemaforo(cancSalaoResultado.total, percentualCancSalaoTopo, FAIXAS_CANCELAMENTO, {
+          dataRegistro: cancSalaoResultado.dataRegistro,
+          ultimoRegistroDisponivel: cancSalaoResultado.ultimoRegistroDisponivel,
+        })
+      : indisponivel(),
+    cancelamentoDelivery: cancDeliveryResultado.dataRegistro
+      ? comSemaforo(cancDeliveryResultado.total, percentualCancDeliveryTopo, FAIXAS_CANCELAMENTO, {
+          dataRegistro: cancDeliveryResultado.dataRegistro,
+          ultimoRegistroDisponivel: cancDeliveryResultado.ultimoRegistroDisponivel,
+        })
+      : indisponivel(),
+    retiradaCompraDireta: compraDiretaResultado.dataRegistro
+      ? comSemaforo(compraDiretaResultado.total, percentualCompraDiretaTopo, FAIXAS_COMPRA_DIRETA, {
+          dataRegistro: compraDiretaResultado.dataRegistro,
+          ultimoRegistroDisponivel: compraDiretaResultado.ultimoRegistroDisponivel,
+        })
+      : indisponivel(),
+    retiradaDeposito: retiradaDepositoResultado.dataRegistro
+      ? {
+          disponivel: true,
+          valorDia: retiradaDepositoResultado.total,
+          dataRegistro: retiradaDepositoResultado.dataRegistro,
+          ultimoRegistroDisponivel: retiradaDepositoResultado.ultimoRegistroDisponivel,
+        }
+      : { disponivel: false },
     fechamento: {
       disponivel: controlesCaixa.fechamento.disponivel,
       caixasAbertos: controlesCaixa.fechamento.caixasEmAberto ?? undefined,

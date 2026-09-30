@@ -14,7 +14,6 @@ export const NAVEGACAO_PRINCIPAL: ItemNavegacao[] = [
   { nome: "Comparativo", href: "/comparativo", icone: "📈" },
   { nome: "Indicadores", href: "/indicadores", icone: "📊" },
   { nome: "Controles de Caixa", href: "/controles-caixa", icone: "🧾" },
-  { nome: "Análise Gerencial", href: "/analise-gerencial", icone: "🔎" },
   { nome: "Fechamento WhatsApp", href: "/fechamento-whatsapp", icone: "💬" },
   { nome: "Fechamento Semanal", href: "/fechamento-semanal", icone: "🗓️" },
 ];
