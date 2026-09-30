@@ -1,4 +1,4 @@
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, between, eq, lte, sql } from "drizzle-orm";
 import type { CodigoUnidade } from "@painel/shared";
 import { classificarSemaforo, FAIXAS_BRINDES, FAIXAS_CANCELAMENTO, FAIXAS_COMPRA_DIRETA, type CorSemaforo } from "@/lib/rules/semaforos";
 import { getDb } from "@/lib/db/client";
@@ -90,7 +90,12 @@ export interface LinhaDetalhamentoLoja {
 
 export interface VisaoGeralData {
   conectado: boolean;
-  dataReferencia: Date;
+  /** Início do período consultado — igual a `dataFim` no modo "data única" (ver `modoPeriodo`). */
+  dataInicio: Date;
+  /** Fim do período consultado — é a data de referência "única" quando `modoPeriodo` é false. */
+  dataFim: Date;
+  /** true quando `dataInicio !== dataFim` (usuária escolheu um intervalo, não um único dia). */
+  modoPeriodo: boolean;
   faturamento: IndicadorSimples & {
     qtdVendas?: number;
     /**
@@ -153,20 +158,36 @@ export function comSemaforo(
   };
 }
 
-/** Soma o valor de uma base de fatos por unidade, para uma data específica. Retorna Map<codigoUnidade, valor>. */
-async function somaPorLoja(
+/**
+ * Soma o valor de uma base de fatos por unidade, dentro de [dataInicio, dataFim]
+ * (inclusive nas duas pontas). No modo "data única" (item 2 da etapa de
+ * período), `dataInicio === dataFim` e o comportamento é idêntico ao `eq()`
+ * literal já validado antes — generalização, não uma regra nova. Retorna
+ * Map<codigoUnidade, valor somado no intervalo>.
+ */
+async function somaPorLojaIntervalo(
   db: ReturnType<typeof getDb>,
   tabela: typeof brindes | typeof cancelamentoSalao | typeof cancelamentoDelivery | typeof compraDireta | typeof faturamento,
-  data: Date
+  dataInicio: Date,
+  dataFim: Date
 ): Promise<Map<string, number>> {
   const linhas = await db
     .select({ codigo: unidades.codigo, total: sql<string>`coalesce(sum(${tabela.valor}), 0)` })
     .from(tabela)
     .innerJoin(unidades, eq(tabela.unidadeId, unidades.id))
-    .where(eq(tabela.data, data))
+    .where(between(tabela.data, dataInicio, dataFim))
     .groupBy(unidades.codigo);
 
   return new Map(linhas.map((l) => [l.codigo, Number(l.total)]));
+}
+
+/** Atalho para uma única data — `somaPorLojaIntervalo` com início = fim. */
+async function somaPorLoja(
+  db: ReturnType<typeof getDb>,
+  tabela: typeof brindes | typeof cancelamentoSalao | typeof cancelamentoDelivery | typeof compraDireta | typeof faturamento,
+  data: Date
+): Promise<Map<string, number>> {
+  return somaPorLojaIntervalo(db, tabela, data, data);
 }
 
 function totalDoMapa(mapa: Map<string, number>): number {
@@ -253,12 +274,23 @@ async function buscarQuebraCaixaResumo(db: ReturnType<typeof getDb>, dataLimite:
   return { disponivel: true, total: arred(rows.reduce((s, r) => s + Number(r.valor), 0)), dataRegistro };
 }
 
-export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeralData> {
+/**
+ * Camada real da Visão Geral — aceita [dataInicio, dataFim]. Modo "data
+ * única" (usado desde sempre pela tela, preservado sem nenhuma mudança de
+ * comportamento) é só o caso `dataInicio === dataFim`; modo "período" é
+ * uma extensão que soma os indicadores dentro do intervalo, em vez de uma
+ * regra nova e paralela. `buscarVisaoGeral` (abaixo) continua existindo
+ * com a assinatura antiga para não quebrar os chamadores já existentes.
+ */
+export async function buscarVisaoGeralPeriodo(dataInicio: Date, dataFim: Date): Promise<VisaoGeralData> {
   const conectado = Boolean(process.env.DATABASE_URL);
+  const modoPeriodo = dataInicio.getTime() !== dataFim.getTime();
 
   const base: VisaoGeralData = {
     conectado,
-    dataReferencia,
+    dataInicio,
+    dataFim,
+    modoPeriodo,
     faturamento: { disponivel: false, comparativoDiaAnterior: null },
     formasPagamento: { disponivel: false },
     brindes: indisponivel(),
@@ -278,10 +310,10 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
 
   const db = getDb();
 
-  // "vs. dia anterior" do card de Faturamento (item 2 desta etapa): DIA CALENDÁRIO literal
-  // anterior a `dataReferencia` — nunca "último registro disponível", nunca D-1 aplicado ao
-  // resto da tela. Só usado para essa comparação pontual do hero.
-  const diaAnterior = new Date(dataReferencia);
+  // "vs. dia anterior" do card de Faturamento: só faz sentido no modo "data única" (item 4
+  // da etapa de período — nunca mostrar uma comparação diária como se fosse de período).
+  // DIA CALENDÁRIO literal anterior a `dataFim` — nunca "último registro disponível".
+  const diaAnterior = new Date(dataFim);
   diaAnterior.setUTCDate(diaAnterior.getUTCDate() - 1);
 
   const [
@@ -300,11 +332,11 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
     formasRows,
     faturamentoDiaAnteriorPorLoja,
   ] = await Promise.all([
-    somaPorLoja(db, faturamento, dataReferencia),
-    somaPorLoja(db, brindes, dataReferencia),
-    somaPorLoja(db, cancelamentoSalao, dataReferencia),
-    somaPorLoja(db, cancelamentoDelivery, dataReferencia),
-    somaPorLoja(db, compraDireta, dataReferencia),
+    somaPorLojaIntervalo(db, faturamento, dataInicio, dataFim),
+    somaPorLojaIntervalo(db, brindes, dataInicio, dataFim),
+    somaPorLojaIntervalo(db, cancelamentoSalao, dataInicio, dataFim),
+    somaPorLojaIntervalo(db, cancelamentoDelivery, dataInicio, dataFim),
+    somaPorLojaIntervalo(db, compraDireta, dataInicio, dataFim),
     // Retirada Depósito: filtro `motivo = 'DEPÓSITO'` — corrigido em etapa anterior (o valor
     // persistido tem acento; o literal sem acento nunca batia, causando "Sem dados" mesmo
     // com registros reais — confirmado via consulta direta ao banco). Mesma regra/coluna,
@@ -313,7 +345,7 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
       .select({ codigo: unidades.codigo, total: sql<string>`coalesce(sum(${retiradaDeposito.valor}), 0)` })
       .from(retiradaDeposito)
       .innerJoin(unidades, eq(retiradaDeposito.unidadeId, unidades.id))
-      .where(and(eq(retiradaDeposito.data, dataReferencia), eq(retiradaDeposito.motivo, "DEPÓSITO")))
+      .where(and(between(retiradaDeposito.data, dataInicio, dataFim), eq(retiradaDeposito.motivo, "DEPÓSITO")))
       .groupBy(unidades.codigo),
     // Existência da BASE (não da data) — distingue "base nunca carregada" de "sem retirada
     // nessa data específica" (item 1 desta etapa): só quando a base tem histórico é que a
@@ -323,18 +355,24 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
       .select({ total: sql<string>`count(*)` })
       .from(retiradaDeposito)
       .where(eq(retiradaDeposito.motivo, "DEPÓSITO")),
-    // Controles de Caixa (item 2 da correção híbrida): EXCEÇÃO — cada card busca sua própria
-    // "última data disponível <= dataReferencia" (consultas independentes desta camada, ver
-    // funções acima; não reaproveitam `buscarControlesCaixa`/regras de semana real/ciclo 16→15
-    // da tela /controles-caixa, que continuam intocadas).
-    buscarFechamentoResumo(db, dataReferencia),
-    buscarPdvMaquininhaResumo(db, dataReferencia),
-    buscarTrocoResumo(db, dataReferencia),
-    buscarConferenciaResumo(db, dataReferencia),
-    buscarQuebraCaixaResumo(db, dataReferencia),
-    // Formas de Pagamento: mesma data exata do Faturamento (mesma fonte, VENDAS.xlsx).
-    db.select({ forma: formasPagamento.forma, valor: formasPagamento.valor }).from(formasPagamento).where(eq(formasPagamento.data, dataReferencia)),
-    somaPorLoja(db, faturamento, diaAnterior),
+    // Controles de Caixa: EXCEÇÃO preservada — cada card busca sua própria "última data
+    // disponível <= dataFim" (consultas independentes desta camada, ver funções acima; não
+    // reaproveitam `buscarControlesCaixa`/regras de semana real/ciclo 16→15 da tela
+    // /controles-caixa, que continuam intocadas). `ultimaDataAte(..., dataFim)` é a mesma
+    // função de sempre — no modo "data única" `dataFim` É a data selecionada, então o
+    // comportamento já validado não muda; no modo período, resolve naturalmente para "último
+    // registro dentro/antes do período", sem nenhuma lógica nova por caso.
+    buscarFechamentoResumo(db, dataFim),
+    buscarPdvMaquininhaResumo(db, dataFim),
+    buscarTrocoResumo(db, dataFim),
+    buscarConferenciaResumo(db, dataFim),
+    buscarQuebraCaixaResumo(db, dataFim),
+    // Formas de Pagamento: mesmo intervalo do Faturamento (mesma fonte, VENDAS.xlsx).
+    db
+      .select({ forma: formasPagamento.forma, valor: formasPagamento.valor })
+      .from(formasPagamento)
+      .where(between(formasPagamento.data, dataInicio, dataFim)),
+    modoPeriodo ? new Map<string, number>() : somaPorLoja(db, faturamento, diaAnterior),
   ]);
 
   const formasPagamentoData: VisaoGeralData["formasPagamento"] =
@@ -346,14 +384,6 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
 
   const totalRetiradaDeposito = totalDoMapa(retiradaDepositoPorLoja);
   const baseRetiradaDepositoExiste = Number(retiradaDepositoBaseRows[0]?.total ?? 0) > 0;
-
-  // "vs. dia anterior": só calcula se houver faturamento real nos dois dias (dia atual e o
-  // dia calendário anterior) — nunca inventa percentual sobre um lado ausente/zero.
-  const totalFaturamentoDiaAnterior = totalDoMapa(faturamentoDiaAnteriorPorLoja);
-  const comparativoDiaAnterior =
-    faturamentoDiaAnteriorPorLoja.size > 0 && totalFaturamentoDiaAnterior > 0 && faturamentoPorLoja.size > 0
-      ? ((totalDoMapa(faturamentoPorLoja) - totalFaturamentoDiaAnterior) / totalFaturamentoDiaAnterior) * 100
-      : null;
 
   const unidadesComDado = new Set<string>([
     ...faturamentoPorLoja.keys(),
@@ -405,34 +435,43 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
     return faturamentoTotal > 0 ? (total / faturamentoTotal) * 100 : 0;
   }
 
+  // "vs. dia anterior" — só no modo "data única" (item 4: nunca uma comparação diária
+  // disfarçada de comparação de período). Mesma regra de nunca inventar percentual: só
+  // calcula se houver faturamento real nos dois dias.
+  const totalFaturamentoDiaAnterior = totalDoMapa(faturamentoDiaAnteriorPorLoja);
+  const comparativoDiaAnterior =
+    !modoPeriodo && faturamentoDiaAnteriorPorLoja.size > 0 && totalFaturamentoDiaAnterior > 0 && faturamentoPorLoja.size > 0
+      ? ((faturamentoTotal - totalFaturamentoDiaAnterior) / totalFaturamentoDiaAnterior) * 100
+      : null;
+
   return {
     ...base,
     faturamento:
       faturamentoPorLoja.size > 0
-        ? { disponivel: true, valor: faturamentoTotal, dataRegistro: dataReferencia, comparativoDiaAnterior }
+        ? { disponivel: true, valor: faturamentoTotal, dataRegistro: dataFim, comparativoDiaAnterior }
         : { disponivel: false, comparativoDiaAnterior: null },
     formasPagamento: formasPagamentoData,
     brindes:
       brindesPorLoja.size > 0
-        ? comSemaforo(brindesTotal, percentualSobreFaturamento(brindesTotal), FAIXAS_BRINDES, { dataRegistro: dataReferencia })
+        ? comSemaforo(brindesTotal, percentualSobreFaturamento(brindesTotal), FAIXAS_BRINDES, { dataRegistro: dataFim })
         : indisponivel(),
     cancelamentoSalao:
       cancSalaoPorLoja.size > 0
-        ? comSemaforo(cancSalaoTotal, percentualSobreFaturamento(cancSalaoTotal), FAIXAS_CANCELAMENTO, { dataRegistro: dataReferencia })
+        ? comSemaforo(cancSalaoTotal, percentualSobreFaturamento(cancSalaoTotal), FAIXAS_CANCELAMENTO, { dataRegistro: dataFim })
         : indisponivel(),
     cancelamentoDelivery:
       cancDeliveryPorLoja.size > 0
-        ? comSemaforo(cancDeliveryTotal, percentualSobreFaturamento(cancDeliveryTotal), FAIXAS_CANCELAMENTO, { dataRegistro: dataReferencia })
+        ? comSemaforo(cancDeliveryTotal, percentualSobreFaturamento(cancDeliveryTotal), FAIXAS_CANCELAMENTO, { dataRegistro: dataFim })
         : indisponivel(),
     retiradaCompraDireta:
       compraDiretaPorLoja.size > 0
-        ? comSemaforo(compraDiretaTotal, percentualSobreFaturamento(compraDiretaTotal), FAIXAS_COMPRA_DIRETA, { dataRegistro: dataReferencia })
+        ? comSemaforo(compraDiretaTotal, percentualSobreFaturamento(compraDiretaTotal), FAIXAS_COMPRA_DIRETA, { dataRegistro: dataFim })
         : indisponivel(),
     // Item 1 desta etapa: a BASE de Retirada Depósito já está carregada — ausência de
-    // registro na data selecionada é "não houve retirada" (R$ 0,00 real), não "sem dados".
-    // Só fica indisponível se a base como um todo nunca teve nenhum registro carregado.
+    // registro na data/período selecionado é "não houve retirada" (R$ 0,00 real), não "sem
+    // dados". Só fica indisponível se a base como um todo nunca teve nenhum registro carregado.
     retiradaDeposito: baseRetiradaDepositoExiste
-      ? { disponivel: true, valorDia: totalRetiradaDeposito, dataRegistro: dataReferencia }
+      ? { disponivel: true, valorDia: totalRetiradaDeposito, dataRegistro: dataFim }
       : { disponivel: false },
     fechamento: fechamentoResumo,
     pdvMaquininha: pdvMaquininhaResumo,
@@ -441,4 +480,14 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
     quebraCaixa: quebraCaixaResumo,
     detalhamentoPorLoja,
   };
+}
+
+/**
+ * Assinatura antiga (modo "data única") — preservada para não quebrar os
+ * chamadores existentes (`buscarVisaoGeralPorData`, a página /visao-geral).
+ * Delega para `buscarVisaoGeralPeriodo` com início = fim; comportamento
+ * idêntico ao de antes desta etapa.
+ */
+export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeralData> {
+  return buscarVisaoGeralPeriodo(dataReferencia, dataReferencia);
 }

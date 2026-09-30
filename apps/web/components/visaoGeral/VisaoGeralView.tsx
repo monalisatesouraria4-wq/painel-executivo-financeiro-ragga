@@ -4,12 +4,12 @@ import { Fragment, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
-import { FiltroDataReferencia, paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
+import { paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import { HistoricoMensalExpandido } from "./HistoricoMensalExpandido";
 import { UNIDADES } from "@painel/shared";
 import type { CorSemaforo } from "@/lib/rules/semaforos";
 import type { VisaoGeralData, IndicadorComSemaforo, IndicadorSimples } from "@/lib/services/visaoGeral";
-import { buscarVisaoGeralPorData } from "@/lib/actions/buscarVisaoGeralPorData";
+import { buscarVisaoGeralPorPeriodo } from "@/lib/actions/buscarVisaoGeralPorPeriodo";
 
 // timeZone: "UTC" — `dataReferencia` é uma data "pura" (meia-noite UTC); sem fixar o fuso,
 // a formatação usa o fuso local do servidor/navegador e pode exibir o dia anterior (bug real
@@ -90,6 +90,29 @@ function Icone({ nome, className = "h-4 w-4" }: { nome: NomeIcone; className?: s
   );
 }
 
+/**
+ * Insight explicativo (item 1 desta etapa) — ícone discreto "ⓘ" com o
+ * texto no atributo `title` nativo (mostra no hover/foco do mouse e é
+ * lido por leitor de tela, sem precisar de nenhuma biblioteca de
+ * tooltip nova). Puramente apresentacional: não calcula nem consulta
+ * nada, só explica o número que já está na tela para quem não conhece a
+ * operação de caixa.
+ */
+function InfoInsight({ texto, claro = false }: { texto: string; claro?: boolean }) {
+  return (
+    <span
+      title={texto}
+      tabIndex={0}
+      className={`inline-flex h-4 w-4 shrink-0 cursor-help items-center justify-center rounded-full border text-[10px] font-bold leading-none ${
+        claro ? "border-white/40 text-white/70 hover:bg-white/10" : "border-ragga-blue/30 text-ragga-blue/60 hover:bg-ragga-blue/5"
+      }`}
+      aria-label={texto}
+    >
+      i
+    </span>
+  );
+}
+
 /** Cores de acento por cor de semáforo — usadas na barra lateral dos cards de indicador. */
 const ACENTO_POR_SEMAFORO: Record<CorSemaforo, string> = {
   azul: "bg-semaforo-azul",
@@ -107,11 +130,13 @@ const ACENTO_POR_SEMAFORO: Record<CorSemaforo, string> = {
  */
 function Secao({
   titulo,
+  insight,
   acao,
   tom = "clara",
   children,
 }: {
   titulo: string;
+  insight?: string;
   acao?: ReactNode;
   tom?: "clara" | "operacional";
   children: ReactNode;
@@ -126,6 +151,7 @@ function Secao({
         <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-ragga-blue-dark">
           <span className="h-3.5 w-1 rounded-full bg-ragga-blue" />
           {titulo}
+          {insight && <InfoInsight texto={insight} />}
         </h2>
         {acao}
       </div>
@@ -148,11 +174,15 @@ function IndicadorVisaoGeral({
   icone,
   dados,
   indisponivelTexto,
+  insight,
+  modoPeriodo,
 }: {
   titulo: string;
   icone: NomeIcone;
   dados: IndicadorComSemaforo;
   indisponivelTexto: string;
+  insight?: string;
+  modoPeriodo?: boolean;
 }) {
   const larguraBarra = dados.disponivel && dados.percentualFaturamento !== undefined ? Math.min(100, dados.percentualFaturamento * 10) : 0;
   return (
@@ -163,13 +193,18 @@ function IndicadorVisaoGeral({
         </span>
         {dados.disponivel && dados.semaforo && <SemaforoBadge cor={dados.semaforo} texto={TEXTO_SEMAFORO[dados.semaforo]} />}
       </div>
-      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-foreground/45">{titulo}</p>
+      <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-foreground/45">
+        {titulo}
+        {insight && <InfoInsight texto={insight} />}
+      </p>
       {dados.disponivel ? (
         <>
           <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
           <div className="mt-2 flex items-center justify-between text-xs text-foreground/50">
             <span>{dados.percentualFaturamento !== undefined && `${formatadorPercentual.format(dados.percentualFaturamento)}% do faturamento`}</span>
-            {dados.dataRegistro && <span className="text-foreground/35">{formatadorDataRegistro.format(dados.dataRegistro)}</span>}
+            {/* No modo período o `dataRegistro` é só o fim do intervalo — mostrar aqui
+                confundiria (parece um único dia); o período já está visível no filtro/hero. */}
+            {!modoPeriodo && dados.dataRegistro && <span className="text-foreground/35">{formatadorDataRegistro.format(dados.dataRegistro)}</span>}
           </div>
           <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-ragga-bg">
             <div
@@ -266,7 +301,11 @@ function CelulaIndicadorLoja({ indicador }: { indicador: IndicadorComSemaforo })
  */
 export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: VisaoGeralData; dataInicial: Date }) {
   const [dados, setDados] = useState(dadosIniciais);
-  const [dataSelecionada, setDataSelecionada] = useState(() => paraInputDate(dataInicial));
+  // Filtro de Período (item 2 desta etapa): "data única" é só o caso `dataInicioSel ===
+  // dataFimSel` — mesmo padrão inicial de sempre (as duas começam na mesma data), extensão
+  // da lógica existente, não um filtro paralelo.
+  const [dataInicioSel, setDataInicioSel] = useState(() => paraInputDate(dataInicial));
+  const [dataFimSel, setDataFimSel] = useState(() => paraInputDate(dataInicial));
   const [pendente, iniciarTransicao] = useTransition();
   const [lojasExpandidas, setLojasExpandidas] = useState<Set<string>>(new Set());
   const [lojaFiltro, setLojaFiltro] = useState<string>("TODAS");
@@ -280,10 +319,11 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
     });
   }
 
-  function alterarData(novaData: string) {
-    setDataSelecionada(novaData);
+  function alterarPeriodo(novoInicio: string, novoFim: string) {
+    setDataInicioSel(novoInicio);
+    setDataFimSel(novoFim);
     iniciarTransicao(async () => {
-      const resultado = await buscarVisaoGeralPorData(dataDoInput(novaData));
+      const resultado = await buscarVisaoGeralPorPeriodo(dataDoInput(novoInicio), dataDoInput(novoFim));
       setDados(resultado);
     });
   }
@@ -328,6 +368,9 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
   ].filter((i) => i.dados.disponivel && (i.dados.semaforo === "vermelho" || i.dados.semaforo === "amarelo"));
 
   const textoIndisponivel = dados.conectado ? "Sem dados disponíveis" : "Sem dados para esta referência";
+  const textoPeriodo = dados.modoPeriodo
+    ? `${formatadorData.format(dados.dataInicio)} até ${formatadorData.format(dados.dataFim)}`
+    : formatadorData.format(dados.dataFim);
 
   return (
     <main className="flex-1 space-y-5 bg-ragga-bg px-6 py-6">
@@ -340,18 +383,38 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-ragga-blue/55">Painel executivo</p>
               <h1 className="mt-0.5 text-[1.75rem] font-extrabold leading-tight text-ragga-blue-dark">Visão Geral</h1>
-              <p className="mt-0.5 text-sm capitalize text-foreground/45">{formatadorDataExtenso.format(dados.dataReferencia)}</p>
+              <p className="mt-0.5 text-sm capitalize text-foreground/45">
+                {dados.modoPeriodo ? `Período: ${textoPeriodo}` : formatadorDataExtenso.format(dados.dataFim)}
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* FILTROS — barra de controle executiva (item 5). */}
+      {/* FILTROS — barra de controle executiva (item 5). Período (item 2 desta etapa):
+          Data inicial + Data final — o padrão é as duas iguais (dia único), preservando a
+          experiência de sempre; quando ficam diferentes, a tela entra em modo período. */}
       <div className="flex flex-wrap items-center gap-4 rounded-xl border border-ragga-blue/10 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(31,53,112,0.06)]">
         <div className="flex items-center gap-2 text-ragga-blue/50">
           <Icone nome="calendario" className="h-4 w-4" />
         </div>
-        <FiltroDataReferencia valor={dataSelecionada} aoAlterar={alterarData} carregando={pendente} />
+        <label className="flex items-center gap-2 text-sm font-medium text-ragga-blue-dark">
+          Período
+          <input
+            type="date"
+            value={dataInicioSel}
+            onChange={(e) => alterarPeriodo(e.target.value, dataFimSel)}
+            className="rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40"
+          />
+          <span className="text-foreground/40">até</span>
+          <input
+            type="date"
+            value={dataFimSel}
+            onChange={(e) => alterarPeriodo(dataInicioSel, e.target.value)}
+            className="rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40"
+          />
+          {pendente && <span className="text-xs font-normal text-foreground/50">Carregando...</span>}
+        </label>
         <span className="hidden h-6 w-px bg-ragga-blue/10 sm:block" />
         <label className="flex items-center gap-2 text-sm font-medium text-ragga-blue-dark">
           <Icone nome="loja" className="h-4 w-4 text-ragga-blue/50" />
@@ -371,6 +434,9 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
         </label>
         {lojaFiltro !== "TODAS" && (
           <span className="rounded-full bg-ragga-blue/10 px-2.5 py-1 text-xs font-semibold text-ragga-blue">Filtrando: {lojaFiltro}</span>
+        )}
+        {dados.modoPeriodo && (
+          <span className="rounded-full bg-ragga-blue/10 px-2.5 py-1 text-xs font-semibold text-ragga-blue">Modo período</span>
         )}
       </div>
 
@@ -402,10 +468,14 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
             <span className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10">
               <Icone nome="faturamento" className="h-3.5 w-3.5" />
             </span>
-            Faturamento do dia
+            Faturamento Bruto
+            <InfoInsight
+              claro
+              texto="Faturamento bruto: total de vendas realizadas no período. Não representa necessariamente o valor recebido no banco no mesmo dia."
+            />
             {lojaFiltro !== "TODAS" && <span className="rounded-full bg-white/10 px-2 py-0.5 normal-case tracking-normal">{lojaFiltro}</span>}
           </div>
-          <span className="text-xs font-medium text-white/60">{formatadorData.format(dados.dataReferencia)}</span>
+          <span className="text-xs font-medium text-white/60">{textoPeriodo}</span>
         </div>
 
         {cardsExibidos.faturamento.disponivel ? (
@@ -413,10 +483,12 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
             <p className="relative mt-4 text-[2.75rem] font-extrabold leading-none tracking-tight sm:text-6xl">
               {formatadorMoeda.format(cardsExibidos.faturamento.valor ?? 0)}
             </p>
-            {/* "vs. dia anterior" (item 2 desta etapa): só para o consolidado de rede — a
-                comparação usa o dia calendário anterior literal, calculado em
-                `buscarVisaoGeral`; nunca "último registro disponível". */}
-            {lojaFiltro === "TODAS" && (
+            {/* "vs. dia anterior": só no modo "data única" e para o consolidado de rede — no
+                modo período (item 4 desta etapa) a comparação nem aparece, nunca uma
+                comparação diária disfarçada de comparação de período. Comparação usa o dia
+                calendário anterior literal, calculado em `buscarVisaoGeralPeriodo`; nunca
+                "último registro disponível". */}
+            {!dados.modoPeriodo && lojaFiltro === "TODAS" && (
               <p className="relative mt-2 text-sm font-medium text-white/80">
                 {dados.faturamento.comparativoDiaAnterior === null ? (
                   <span className="text-white/50">Sem comparação com o dia anterior</span>
@@ -466,7 +538,10 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
       )}
 
       {/* FORMAS DE PAGAMENTO — composição financeira (item 8). */}
-      <Secao titulo="Formas de Pagamento">
+      <Secao
+        titulo="Formas de Pagamento"
+        insight="O prazo de recebimento varia conforme a forma de pagamento: PIX imediato; crédito e débito D+1; voucher D+30; venda a prazo mensal; online/iFood às quartas-feiras."
+      >
         {dados.formasPagamento.disponivel && dados.formasPagamento.buckets ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {(
@@ -497,18 +572,29 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
       {/* INDICADORES (item 9). */}
       <Secao titulo="Indicadores">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <IndicadorVisaoGeral titulo="Brindes" icone="brinde" dados={cardsExibidos.brindes} indisponivelTexto={textoIndisponivel} />
+          <IndicadorVisaoGeral
+            titulo="Brindes"
+            icone="brinde"
+            dados={cardsExibidos.brindes}
+            indisponivelTexto={textoIndisponivel}
+            modoPeriodo={dados.modoPeriodo}
+            insight="Brindes representam concessões/descontos registrados nas vendas — não é automaticamente saída de dinheiro do caixa."
+          />
           <IndicadorVisaoGeral
             titulo="Cancelamento Salão"
             icone="cancelSalao"
             dados={cardsExibidos.cancelamentoSalao}
             indisponivelTexto={textoIndisponivel}
+            modoPeriodo={dados.modoPeriodo}
+            insight="Cancelamentos representam vendas canceladas e devem ser analisados conforme o motivo da ocorrência."
           />
           <IndicadorVisaoGeral
             titulo="Cancelamento Delivery"
             icone="cancelDelivery"
             dados={cardsExibidos.cancelamentoDelivery}
             indisponivelTexto={textoIndisponivel}
+            modoPeriodo={dados.modoPeriodo}
+            insight="Cancelamentos representam vendas canceladas e devem ser analisados conforme o motivo da ocorrência."
           />
         </div>
       </Secao>
@@ -522,18 +608,23 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
             icone="retirada"
             dados={cardsExibidos.retiradaCompraDireta}
             indisponivelTexto={textoIndisponivel}
+            modoPeriodo={dados.modoPeriodo}
+            insight="Retirada Compra Direta representa valores retirados do caixa para aquisição/compra direta."
           />
           <div className="group relative overflow-hidden rounded-xl border border-ragga-blue/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ragga-blue-dark text-white">
               <Icone nome="deposito" className="h-4 w-4" />
             </span>
-            <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-foreground/45">Retirada p/ Depósito</p>
+            <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-foreground/45">
+              Retirada p/ Depósito
+              <InfoInsight texto="Retirada para depósito é uma movimentação de caixa destinada ao depósito bancário, não uma despesa." />
+            </p>
             {dados.retiradaDeposito.disponivel ? (
               <>
                 <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">
                   {formatadorMoeda.format(dados.retiradaDeposito.valorDia ?? 0)}
                 </p>
-                {dados.retiradaDeposito.dataRegistro && (
+                {!dados.modoPeriodo && dados.retiradaDeposito.dataRegistro && (
                   <p className="mt-2 text-xs text-foreground/40">{formatadorDataRegistro.format(dados.retiradaDeposito.dataRegistro)}</p>
                 )}
               </>
@@ -552,6 +643,7 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
       <Secao
         titulo="Controles de Caixa"
         tom="operacional"
+        insight="Controles de caixa representam conferências/controles operacionais (abertura, fechamento, troco, PDV × maquininha) — não são faturamento."
         acao={
           <Link href="/controles-caixa" className="text-xs font-semibold text-ragga-blue hover:underline">
             Ver detalhes →
