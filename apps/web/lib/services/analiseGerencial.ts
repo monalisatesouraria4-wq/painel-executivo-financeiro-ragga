@@ -96,8 +96,7 @@ export interface OrientacaoEntry {
  * `motivo` de brindes/cancelamento_salao/cancelamento_delivery/compra_direta,
  * ou os rótulos derivados de sinal para Troco / do status já existente para
  * PDV × Adquirente). Motivo sem entrada aqui mostra "Sem orientação
- * cadastrada" — nunca uma ação inventada (ex.: Cancelamento Salão
- * "MOT 06 - DESPERDÍCIO", que a área confirmou ainda não ter regra).
+ * cadastrada" — nunca uma ação inventada.
  */
 export const ORIENTACOES_POR_MOTIVO: Record<string, OrientacaoEntry> = {
   // --- Cancelamento Salão ---
@@ -119,7 +118,9 @@ export const ORIENTACOES_POR_MOTIVO: Record<string, OrientacaoEntry> = {
     texto:
       "Atenção ao tempo de preparo, principalmente nos pedidos de balcão/retirada, para reduzir desistências causadas por demora.",
   },
-  // "MOT 06 - DESPERDÍCIO": sem orientação cadastrada — confirmado pela área, não inventar regra.
+  "Cancelamento Salão|MOT 06 - DESPERDÍCIO": {
+    texto: "Desperdício: reforçar a conferência do pedido antes do preparo e identificar a causa da perda para evitar recorrência.",
+  },
 
   // --- Cancelamento Delivery ---
   "Cancelamento Delivery|MOT 02 - ATRASO": {

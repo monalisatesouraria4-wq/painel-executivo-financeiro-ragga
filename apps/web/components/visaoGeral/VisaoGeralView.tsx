@@ -409,9 +409,26 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
         </div>
 
         {cardsExibidos.faturamento.disponivel ? (
-          <p className="relative mt-4 text-[2.75rem] font-extrabold leading-none tracking-tight sm:text-6xl">
-            {formatadorMoeda.format(cardsExibidos.faturamento.valor ?? 0)}
-          </p>
+          <>
+            <p className="relative mt-4 text-[2.75rem] font-extrabold leading-none tracking-tight sm:text-6xl">
+              {formatadorMoeda.format(cardsExibidos.faturamento.valor ?? 0)}
+            </p>
+            {/* "vs. dia anterior" (item 2 desta etapa): só para o consolidado de rede — a
+                comparação usa o dia calendário anterior literal, calculado em
+                `buscarVisaoGeral`; nunca "último registro disponível". */}
+            {lojaFiltro === "TODAS" && (
+              <p className="relative mt-2 text-sm font-medium text-white/80">
+                {dados.faturamento.comparativoDiaAnterior === null ? (
+                  <span className="text-white/50">Sem comparação com o dia anterior</span>
+                ) : (
+                  <span className={dados.faturamento.comparativoDiaAnterior >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                    {dados.faturamento.comparativoDiaAnterior >= 0 ? "↑" : "↓"}{" "}
+                    {formatadorPercentual.format(Math.abs(dados.faturamento.comparativoDiaAnterior))}% vs. dia anterior
+                  </span>
+                )}
+              </p>
+            )}
+          </>
         ) : (
           <>
             <p className="relative mt-4 text-[2.75rem] font-extrabold leading-none text-white/35 sm:text-6xl">—</p>

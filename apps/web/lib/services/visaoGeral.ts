@@ -91,7 +91,18 @@ export interface LinhaDetalhamentoLoja {
 export interface VisaoGeralData {
   conectado: boolean;
   dataReferencia: Date;
-  faturamento: IndicadorSimples & { qtdVendas?: number };
+  faturamento: IndicadorSimples & {
+    qtdVendas?: number;
+    /**
+     * Comparação "vs. dia anterior" do card de Faturamento (item 2 desta
+     * etapa) — percentual de variação contra o DIA CALENDÁRIO
+     * imediatamente anterior à `dataReferencia` (literal, nunca "último
+     * registro disponível"). `null` quando não há faturamento nesse dia
+     * anterior (ou quando o dia atual também não tem), para nunca
+     * inventar percentual — a tela mostra "Sem comparação" nesse caso.
+     */
+    comparativoDiaAnterior: number | null;
+  };
   formasPagamento: { disponivel: boolean; buckets?: FormaPagamentoBuckets };
   brindes: IndicadorComSemaforo;
   cancelamentoSalao: IndicadorComSemaforo;
@@ -248,7 +259,7 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
   const base: VisaoGeralData = {
     conectado,
     dataReferencia,
-    faturamento: { disponivel: false },
+    faturamento: { disponivel: false, comparativoDiaAnterior: null },
     formasPagamento: { disponivel: false },
     brindes: indisponivel(),
     cancelamentoSalao: indisponivel(),
@@ -267,6 +278,12 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
 
   const db = getDb();
 
+  // "vs. dia anterior" do card de Faturamento (item 2 desta etapa): DIA CALENDÁRIO literal
+  // anterior a `dataReferencia` — nunca "último registro disponível", nunca D-1 aplicado ao
+  // resto da tela. Só usado para essa comparação pontual do hero.
+  const diaAnterior = new Date(dataReferencia);
+  diaAnterior.setUTCDate(diaAnterior.getUTCDate() - 1);
+
   const [
     faturamentoPorLoja,
     brindesPorLoja,
@@ -281,6 +298,7 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
     conferenciaResumo,
     quebraCaixaResumo,
     formasRows,
+    faturamentoDiaAnteriorPorLoja,
   ] = await Promise.all([
     somaPorLoja(db, faturamento, dataReferencia),
     somaPorLoja(db, brindes, dataReferencia),
@@ -316,6 +334,7 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
     buscarQuebraCaixaResumo(db, dataReferencia),
     // Formas de Pagamento: mesma data exata do Faturamento (mesma fonte, VENDAS.xlsx).
     db.select({ forma: formasPagamento.forma, valor: formasPagamento.valor }).from(formasPagamento).where(eq(formasPagamento.data, dataReferencia)),
+    somaPorLoja(db, faturamento, diaAnterior),
   ]);
 
   const formasPagamentoData: VisaoGeralData["formasPagamento"] =
@@ -327,6 +346,14 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
 
   const totalRetiradaDeposito = totalDoMapa(retiradaDepositoPorLoja);
   const baseRetiradaDepositoExiste = Number(retiradaDepositoBaseRows[0]?.total ?? 0) > 0;
+
+  // "vs. dia anterior": só calcula se houver faturamento real nos dois dias (dia atual e o
+  // dia calendário anterior) — nunca inventa percentual sobre um lado ausente/zero.
+  const totalFaturamentoDiaAnterior = totalDoMapa(faturamentoDiaAnteriorPorLoja);
+  const comparativoDiaAnterior =
+    faturamentoDiaAnteriorPorLoja.size > 0 && totalFaturamentoDiaAnterior > 0 && faturamentoPorLoja.size > 0
+      ? ((totalDoMapa(faturamentoPorLoja) - totalFaturamentoDiaAnterior) / totalFaturamentoDiaAnterior) * 100
+      : null;
 
   const unidadesComDado = new Set<string>([
     ...faturamentoPorLoja.keys(),
@@ -381,7 +408,9 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
   return {
     ...base,
     faturamento:
-      faturamentoPorLoja.size > 0 ? { disponivel: true, valor: faturamentoTotal, dataRegistro: dataReferencia } : { disponivel: false },
+      faturamentoPorLoja.size > 0
+        ? { disponivel: true, valor: faturamentoTotal, dataRegistro: dataReferencia, comparativoDiaAnterior }
+        : { disponivel: false, comparativoDiaAnterior: null },
     formasPagamento: formasPagamentoData,
     brindes:
       brindesPorLoja.size > 0
