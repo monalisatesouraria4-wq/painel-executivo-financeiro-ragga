@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import type { CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
 import { EstadoVazio } from "@/components/ui/EstadoVazio";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -34,19 +35,21 @@ const formatadorPercentual = new Intl.NumberFormat("pt-BR", { minimumFractionDig
 // padrão já aplicado em ConferenciaTab.tsx).
 const formatadorData = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
 
-export function TrocoTab({ dados }: { dados: ControlesCaixaData["troco"] }) {
+export function TrocoTab({ dados, unidade }: { dados: ControlesCaixaData["troco"]; unidade?: CodigoUnidade }) {
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  const linhas = unidade ? dados.linhas.filter((l) => l.unidade === unidade) : dados.linhas;
+  const disponivel = unidade ? linhas.length > 0 : dados.disponivel;
 
-  function alternar(unidade: string) {
+  function alternar(unidadeLinha: string) {
     setExpandidas((atual) => {
       const proximo = new Set(atual);
-      if (proximo.has(unidade)) proximo.delete(unidade);
-      else proximo.add(unidade);
+      if (proximo.has(unidadeLinha)) proximo.delete(unidadeLinha);
+      else proximo.add(unidadeLinha);
       return proximo;
     });
   }
 
-  const todasCaixas = useMemo(() => dados.linhas.flatMap((l) => l.caixas), [dados.linhas]);
+  const todasCaixas = useMemo(() => linhas.flatMap((l) => l.caixas), [linhas]);
   const conferidos = todasCaixas.filter((c) => c.status === "Conferido").length;
   const comDivergencia = todasCaixas.filter((c) => c.status === "Divergência").length;
   const valorTotalDivergencias = todasCaixas
@@ -72,7 +75,7 @@ export function TrocoTab({ dados }: { dados: ControlesCaixaData["troco"] }) {
         </p>
       )}
 
-      {!dados.disponivel ? (
+      {!disponivel ? (
         <p className="text-sm text-foreground/50">Sem dados para o período</p>
       ) : (
         <>
@@ -110,10 +113,10 @@ export function TrocoTab({ dados }: { dados: ControlesCaixaData["troco"] }) {
                 </tr>
               </thead>
               <tbody>
-                {dados.linhas.length === 0 ? (
+                {linhas.length === 0 ? (
                   <EstadoVazio colSpan={6} />
                 ) : (
-                  dados.linhas.map((linha) => {
+                  linhas.map((linha) => {
                     const conferidosLoja = linha.caixas.filter((c) => c.status === "Conferido").length;
                     const divergentesLoja = linha.caixas.filter((c) => c.status === "Divergência");
                     const valorDivergenciaLoja = divergentesLoja.reduce((s, c) => s + Math.abs(c.diferenca), 0);

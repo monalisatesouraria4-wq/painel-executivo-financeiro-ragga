@@ -1,6 +1,6 @@
 "use client";
 
-import { UNIDADES } from "@painel/shared";
+import { UNIDADES, type CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
 import type { ControlesCaixaData } from "@/lib/services/controlesCaixa";
 
@@ -62,15 +62,25 @@ function CelulaDia({ dia }: { dia: { qtdConferidos: number | null; emAtraso: boo
   );
 }
 
-export function ConferenciaTab({ dados }: { dados: ControlesCaixaData["conferencia"] }) {
+export function ConferenciaTab({ dados, unidade }: { dados: ControlesCaixaData["conferencia"]; unidade?: CodigoUnidade }) {
   if (!dados.disponivel || !dados.periodoInicio || !dados.periodoFim) {
     return <p className="text-sm text-foreground/50">Sem dados para o período.</p>;
   }
 
   const dias = diasDoPeriodo(dados.periodoInicio, dados.periodoFim);
+  const linhasBase = unidade ? dados.linhas.filter((l) => l.unidade === unidade) : dados.linhas;
   // Ordem natural das lojas (BG 01..BG 13, IS 01..03, ROBS, MAPOLI) — nunca alfabética simples.
-  const linhasPorUnidade = new Map(dados.linhas.map((l) => [l.unidade, l]));
+  const linhasPorUnidade = new Map(linhasBase.map((l) => [l.unidade, l]));
   const linhasOrdenadas = UNIDADES.map((u) => linhasPorUnidade.get(u)).filter((l): l is NonNullable<typeof l> => l !== undefined);
+
+  const totalCaixasRede = unidade ? linhasOrdenadas.reduce((s, l) => s + (l.qtdCadastrados ?? 0), 0) : (dados.totalCaixasRede ?? 0);
+  const totalConferidosRede = unidade ? linhasOrdenadas.reduce((s, l) => s + (l.qtdConferidos ?? 0), 0) : (dados.totalConferidosRede ?? 0);
+  const totalEmAtraso = unidade ? linhasOrdenadas.reduce((s, l) => s + l.atrasos, 0) : (dados.totalEmAtraso ?? 0);
+  const percentualConferidoRede = unidade
+    ? linhasOrdenadas.length > 0
+      ? linhasOrdenadas.reduce((s, l) => s + (l.percentualConferido ?? 0), 0) / linhasOrdenadas.length
+      : 0
+    : (dados.percentualConferidoRede ?? 0);
 
   return (
     <div className="space-y-4">
@@ -79,10 +89,10 @@ export function ConferenciaTab({ dados }: { dados: ControlesCaixaData["conferenc
       </h2>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <BigNumberCard titulo="Caixas Cadastrados" valor={String(dados.totalCaixasRede ?? 0)} />
-        <BigNumberCard titulo="Caixas Conferidos" valor={String(dados.totalConferidosRede ?? 0)} />
-        <BigNumberCard titulo="Em Atraso" valor={String(dados.totalEmAtraso ?? 0)} alerta={(dados.totalEmAtraso ?? 0) > 0} />
-        <BigNumberCard titulo="% Conferido" valor={`${formatadorPercentual.format(dados.percentualConferidoRede ?? 0)}%`} />
+        <BigNumberCard titulo="Caixas Cadastrados" valor={String(totalCaixasRede)} />
+        <BigNumberCard titulo="Caixas Conferidos" valor={String(totalConferidosRede)} />
+        <BigNumberCard titulo="Em Atraso" valor={String(totalEmAtraso)} alerta={totalEmAtraso > 0} />
+        <BigNumberCard titulo="% Conferido" valor={`${formatadorPercentual.format(percentualConferidoRede)}%`} />
       </div>
 
       <Card className="overflow-x-auto p-0">

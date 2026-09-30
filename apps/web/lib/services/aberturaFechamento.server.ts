@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, between, eq, sql } from "drizzle-orm";
 import type { CodigoUnidade } from "@painel/shared";
 import { getDb } from "@/lib/db/client";
 import { unidades, fechamentoCaixa } from "@/lib/db/schema";
@@ -93,6 +93,114 @@ export async function buscarAberturaFechamento(dataSelecionada: Date): Promise<A
   return {
     conectado: true,
     dataSelecionada,
+    dataMaisRecenteDisponivel,
+    disponivel: linhas.length > 0,
+    totalCaixas: linhas.length,
+    abertos: linhas.length,
+    fechados: linhas.filter((l) => l.fechado).length,
+    emAberto,
+    diferencaFinanceira,
+    linhas,
+  };
+}
+
+/**
+ * Fechamento por PERÍODO (item 2 da etapa de revisão — filtro de Loja +
+ * Período em Controles de Caixa). Regra "data exata" preservada
+ * literalmente: soma todos os dias entre `inicio` e `fim` (inclusive),
+ * sem nenhum deslocamento — mesma agregação de `buscarAberturaFechamento`,
+ * só troca `eq(data, dataSelecionada)` por `between(data, inicio, fim)`
+ * e aceita um filtro de loja opcional.
+ */
+export async function buscarAberturaFechamentoIntervalo(
+  inicio: Date,
+  fim: Date,
+  unidadeFiltro?: CodigoUnidade
+): Promise<AberturaFechamentoData> {
+  const conectado = Boolean(process.env.DATABASE_URL);
+
+  if (!conectado) {
+    return {
+      conectado: false,
+      dataSelecionada: inicio,
+      dataMaisRecenteDisponivel: null,
+      disponivel: false,
+      totalCaixas: 0,
+      abertos: 0,
+      fechados: 0,
+      emAberto: 0,
+      diferencaFinanceira: 0,
+      linhas: [],
+    };
+  }
+
+  const db = getDb();
+
+  const [{ maxData }] = await db.select({ maxData: sql<string | null>`max(${fechamentoCaixa.data})` }).from(fechamentoCaixa);
+  const dataMaisRecenteDisponivel = maxData ? new Date(maxData) : null;
+
+  let unidadeId: string | undefined;
+  if (unidadeFiltro) {
+    const [linha] = await db.select({ id: unidades.id }).from(unidades).where(eq(unidades.codigo, unidadeFiltro));
+    unidadeId = linha?.id;
+    if (!unidadeId) {
+      return {
+        conectado: true,
+        dataSelecionada: inicio,
+        dataMaisRecenteDisponivel,
+        disponivel: false,
+        totalCaixas: 0,
+        abertos: 0,
+        fechados: 0,
+        emAberto: 0,
+        diferencaFinanceira: 0,
+        linhas: [],
+      };
+    }
+  }
+
+  const rows = await db
+    .select({
+      codigo: unidades.codigo,
+      caixa: fechamentoCaixa.caixa,
+      movimento: fechamentoCaixa.movimento,
+      abertura: fechamentoCaixa.abertura,
+      fechamento: fechamentoCaixa.fechamento,
+      operador: fechamentoCaixa.operador,
+      situacao: fechamentoCaixa.situacao,
+      difFechamento: fechamentoCaixa.difFechamento,
+      difConciliacao: fechamentoCaixa.difConciliacao,
+      difTotal: fechamentoCaixa.difTotal,
+    })
+    .from(fechamentoCaixa)
+    .innerJoin(unidades, eq(fechamentoCaixa.unidadeId, unidades.id))
+    .where(
+      unidadeId
+        ? and(between(fechamentoCaixa.data, inicio, fim), eq(fechamentoCaixa.unidadeId, unidadeId))
+        : between(fechamentoCaixa.data, inicio, fim)
+    )
+    .orderBy(unidades.codigo, fechamentoCaixa.caixa);
+
+  const linhas: CaixaAberturaFechamentoLinha[] = rows.map((r) => ({
+    unidade: r.codigo as CodigoUnidade,
+    caixa: r.caixa,
+    movimento: r.movimento,
+    operador: r.operador,
+    abertura: r.abertura,
+    fechamento: r.fechamento,
+    situacao: r.situacao ?? "",
+    fechado: r.situacao === "Fechado" || r.situacao === "Conciliado",
+    difFechamento: r.difFechamento ? Number(r.difFechamento) : null,
+    difConciliacao: r.difConciliacao ? Number(r.difConciliacao) : null,
+    difTotal: r.difTotal ? Number(r.difTotal) : null,
+  }));
+
+  const emAberto = linhas.filter((l) => l.situacao === "Aberto").length;
+  const diferencaFinanceira = linhas.reduce((soma, l) => soma + (l.difFechamento ?? 0), 0);
+
+  return {
+    conectado: true,
+    dataSelecionada: inicio,
     dataMaisRecenteDisponivel,
     disponivel: linhas.length > 0,
     totalCaixas: linhas.length,

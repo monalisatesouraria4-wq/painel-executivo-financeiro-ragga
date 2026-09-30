@@ -5,6 +5,8 @@ import { processarArquivoBase, type BaseInfo, type ResultadoImportacao } from "@
 import type { RegistroBase } from "@/lib/import/tipos";
 
 const formatadorHora = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+// timeZone: "UTC" — datas desta camada são "puras" (meia-noite UTC), mesmo padrão já usado em outras telas.
+const formatadorData = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
 
 /**
  * Modal de upload — reproduz o padrão comum aos 10 modais dedicados do
@@ -98,8 +100,13 @@ export function BaseUpdateModal({
             <div className="mt-3 rounded-lg border border-semaforo-verde/30 bg-semaforo-verde/10 px-4 py-3 text-sm text-ragga-blue-dark">
               🟢 <b>Base atualizada com sucesso.</b>
               <div className="mt-1 text-xs text-foreground/70">
-                Novos: {resultado.inseridos} · Atualizados: {resultado.atualizados} · Total: {resultado.totalFinal}
+                Novos: {resultado.inseridos} · Atualizados: {resultado.atualizados} · Rejeitados: {resultado.rejeitados} · Total:{" "}
+                {resultado.totalFinal}
                 {horaAplicado && <> · Aplicado em: {horaAplicado}</>}
+              </div>
+              <div className="mt-1 text-xs text-foreground/70">
+                Período encontrado no arquivo: {formatadorData.format(resultado.periodoArquivoInicio)} a{" "}
+                {formatadorData.format(resultado.periodoArquivoFim)}
               </div>
             </div>
             <div className="mt-2 rounded-lg border border-ragga-blue/15 bg-ragga-bg px-4 py-3 text-xs text-ragga-blue-dark">

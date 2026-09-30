@@ -247,6 +247,11 @@ export type ResultadoImportacao =
       totalFinal: number;
       novoEstado: RegistroBase[];
       persistidoNoBanco: boolean;
+      /** Período (min/max data) encontrado NO ARQUIVO enviado — item 7 da etapa de revisão. */
+      periodoArquivoInicio: Date;
+      periodoArquivoFim: Date;
+      /** Linhas rejeitadas pelo parser (unidade não reconhecida, data/valor inválido etc.). */
+      rejeitados: number;
     }
   | { status: "erro"; mensagem: string };
 
@@ -379,6 +384,10 @@ export async function processarArquivoBase(
     return { status: "erro", mensagem: `Arquivo não aprovado. ${MENSAGEM_ZERO_REGISTROS[id]}` };
   }
 
+  const datasRegistros = parseResult.registros.map((r) => r.data.getTime());
+  const periodoArquivoInicio = new Date(Math.min(...datasRegistros));
+  const periodoArquivoFim = new Date(Math.max(...datasRegistros));
+
   // Lote inicial (Visão Geral) com persistência real no Postgres — ver
   // lib/db/persistencia.ts. A Server Action decide, DO LADO DO SERVIDOR,
   // se há DATABASE_URL configurada (checar `process.env` aqui, no client
@@ -397,6 +406,9 @@ export async function processarArquivoBase(
         totalFinal: contagens.totalFinal,
         novoEstado,
         persistidoNoBanco: true,
+        periodoArquivoInicio,
+        periodoArquivoFim,
+        rejeitados: parseResult.rejeitados.length,
       };
     }
   } catch (err) {
@@ -417,5 +429,8 @@ export async function processarArquivoBase(
     totalFinal: simulacao.totalFinal,
     novoEstado,
     persistidoNoBanco: false,
+    periodoArquivoInicio,
+    periodoArquivoFim,
+    rejeitados: parseResult.rejeitados.length,
   };
 }

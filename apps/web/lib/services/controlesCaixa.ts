@@ -55,7 +55,6 @@ export interface PdvMaquininhaLinha {
   totalPdv: number;
   totalMaquininha: number;
   diferenca: number;
-  percentualSobreFaturamento: number | null;
 }
 
 export interface TrocoCaixaLinha {
@@ -245,6 +244,92 @@ export async function buscarTrocoDaSemana(
 }
 
 /**
+ * Troco por PERÍODO (item 2 da etapa de revisão). Regra "semana
+ * correspondente" preservada: os dois extremos escolhidos pela usuária
+ * são expandidos para a semana real (`semanaRealDoPeriodo`, mesma função
+ * já validada) que os contém, e a consulta cobre da segunda-feira da
+ * primeira semana ao domingo da última — nunca uma janela arbitrária.
+ * Mesma agregação de `buscarTrocoDaSemana`, só troca a origem do
+ * intervalo e aceita um filtro de loja opcional.
+ */
+export async function buscarTrocoDoIntervalo(
+  db: ReturnType<typeof getDb>,
+  dataInicio: Date,
+  dataFim: Date,
+  unidadeFiltro?: CodigoUnidade
+): Promise<ControlesCaixaData["troco"]> {
+  const vazio: ControlesCaixaData["troco"] = {
+    disponivel: false,
+    totalConferido: null,
+    totalInformado: null,
+    diferencaTotal: null,
+    divergencias: null,
+    linhas: [],
+  };
+
+  const inicio = semanaRealDoPeriodo(dataInicio).inicio;
+  const fim = semanaRealDoPeriodo(dataFim).fim;
+
+  let unidadeId: string | undefined;
+  if (unidadeFiltro) {
+    const [linha] = await db.select({ id: unidades.id }).from(unidades).where(eq(unidades.codigo, unidadeFiltro));
+    unidadeId = linha?.id;
+    if (!unidadeId) return vazio;
+  }
+
+  const trocoRows = await db
+    .select({
+      codigo: unidades.codigo,
+      caixa: troco.caixa,
+      data: troco.data,
+      conferido: troco.trocoConferidoGerente,
+      informado: troco.trocoInformadoColaborador,
+      diferenca: troco.diferenca,
+      operador: troco.operador,
+      planoDeAcao: troco.planoDeAcao,
+    })
+    .from(troco)
+    .innerJoin(unidades, eq(troco.unidadeId, unidades.id))
+    .where(unidadeId ? and(between(troco.data, inicio, fim), eq(troco.unidadeId, unidadeId)) : between(troco.data, inicio, fim));
+
+  if (trocoRows.length === 0) return vazio;
+
+  const porLoja = new Map<string, TrocoCaixaLinha[]>();
+  for (const r of trocoRows) {
+    const diferenca = Number(r.diferenca);
+    const status: TrocoCaixaLinha["status"] = diferenca === 0 ? "Conferido" : "Divergência";
+    const linha: TrocoCaixaLinha = {
+      caixa: r.caixa,
+      data: r.data,
+      conferido: Number(r.conferido),
+      informado: Number(r.informado),
+      diferenca,
+      status,
+      operador: r.operador,
+      planoDeAcao: r.planoDeAcao,
+    };
+    const lista = porLoja.get(r.codigo) ?? [];
+    lista.push(linha);
+    porLoja.set(r.codigo, lista);
+  }
+
+  const linhasTroco: TrocoLinha[] = [...porLoja.entries()].map(([codigo, caixas]) => ({
+    unidade: codigo as CodigoUnidade,
+    caixas,
+  }));
+  const todasCaixas = linhasTroco.flatMap((l) => l.caixas);
+
+  return {
+    disponivel: todasCaixas.length > 0,
+    totalConferido: arred(todasCaixas.reduce((s, c) => s + c.conferido, 0)),
+    totalInformado: arred(todasCaixas.reduce((s, c) => s + c.informado, 0)),
+    diferencaTotal: arred(todasCaixas.reduce((s, c) => s + c.diferenca, 0)),
+    divergencias: todasCaixas.filter((c) => c.status === "Divergência").length,
+    linhas: linhasTroco,
+  };
+}
+
+/**
  * Conferência — resolve o PERÍODO (ciclo real 16→15) que contém
  * `dataReferencia` a partir de `fontesPorPeriodo` (tipoBase='conferencia'),
  * já gravado no import (mesmo conceito de `resolverAbaConferenciaPorData`
@@ -368,6 +453,115 @@ export async function buscarConferenciaDoPeriodo(
 }
 
 /**
+ * Conferência por PERÍODO PERSONALIZADO (item 2 da etapa de revisão) —
+ * bypassa a resolução de um único ciclo via `fontesPorPeriodo` e filtra
+ * `conferencia.data` diretamente pelo intervalo escolhido (mais o filtro
+ * de loja opcional). Mesma agregação/status de `buscarConferenciaDoPeriodo`
+ * (`calcularStatusConferencia`/`calcularPendente`, já validadas) —
+ * nenhuma regra nova, só a origem do intervalo de datas.
+ */
+export async function buscarConferenciaDoIntervalo(
+  db: ReturnType<typeof getDb>,
+  dataInicio: Date,
+  dataFim: Date,
+  unidadeFiltro?: CodigoUnidade
+): Promise<ControlesCaixaData["conferencia"]> {
+  const vazio: ControlesCaixaData["conferencia"] = {
+    disponivel: false,
+    percentualConferidoRede: null,
+    totalEmAtraso: null,
+    linhas: [],
+    totalCaixasRede: null,
+    totalConferidosRede: null,
+    totalPendentesRede: null,
+    periodoInicio: dataInicio,
+    periodoFim: dataFim,
+  };
+
+  let unidadeId: string | undefined;
+  if (unidadeFiltro) {
+    const [linha] = await db.select({ id: unidades.id }).from(unidades).where(eq(unidades.codigo, unidadeFiltro));
+    unidadeId = linha?.id;
+    if (!unidadeId) return vazio;
+  }
+
+  const confRows = await db
+    .select({
+      codigo: unidades.codigo,
+      data: conferencia.data,
+      qtdCadastrados: conferencia.qtdCadastrados,
+      qtdConferidos: conferencia.qtdConferidos,
+      emAtraso: conferencia.emAtraso,
+      respConferencia: conferencia.respConferencia,
+    })
+    .from(conferencia)
+    .innerJoin(unidades, eq(conferencia.unidadeId, unidades.id))
+    .where(
+      unidadeId
+        ? and(between(conferencia.data, dataInicio, dataFim), eq(conferencia.unidadeId, unidadeId))
+        : between(conferencia.data, dataInicio, dataFim)
+    )
+    .orderBy(desc(conferencia.data));
+
+  if (confRows.length === 0) return vazio;
+
+  const porLoja = new Map<string, (typeof confRows)[number][]>();
+  for (const r of confRows) {
+    const lista = porLoja.get(r.codigo) ?? [];
+    lista.push(r);
+    porLoja.set(r.codigo, lista);
+  }
+
+  const linhasConf: ConferenciaLinha[] = [...porLoja.entries()].map(([codigo, rows]) => {
+    const dias: ConferenciaDiaLinha[] = rows.map((r) => ({
+      data: r.data,
+      qtdCadastrados: r.qtdCadastrados,
+      qtdConferidos: r.qtdConferidos,
+      emAtraso: r.emAtraso,
+      respConferencia: r.respConferencia,
+      status: calcularStatusConferencia({
+        total: r.qtdCadastrados,
+        conferido: r.qtdConferidos ?? 0,
+        emAtrasoPelaRegraGlobal: r.emAtraso,
+        unidadeSemConferenciaNoFimDeSemana: false,
+        dataEhFimDeSemana: false,
+      }),
+    }));
+
+    const ultima = rows[0]; // já ordenado desc por data
+    const status = dias[0].status;
+    const pendentes = calcularPendente(ultima.qtdCadastrados, ultima.qtdConferidos ?? 0);
+
+    return {
+      unidade: codigo as CodigoUnidade,
+      ultimaDataConferida: ultima.data,
+      status,
+      percentualConferido: ultima.qtdCadastrados > 0 ? ((ultima.qtdConferidos ?? 0) / ultima.qtdCadastrados) * 100 : null,
+      atrasos: rows.filter((r) => r.emAtraso).length,
+      qtdCadastrados: ultima.qtdCadastrados,
+      qtdConferidos: ultima.qtdConferidos,
+      pendentes,
+      dias,
+    };
+  });
+
+  const mediaPercentual =
+    linhasConf.length > 0 ? linhasConf.reduce((s, l) => s + (l.percentualConferido ?? 0), 0) / linhasConf.length : null;
+
+  return {
+    disponivel: linhasConf.length > 0,
+    percentualConferidoRede: mediaPercentual,
+    totalEmAtraso: linhasConf.reduce((s, l) => s + l.atrasos, 0),
+    linhas: linhasConf,
+    totalCaixasRede: linhasConf.reduce((s, l) => s + (l.qtdCadastrados ?? 0), 0),
+    totalConferidosRede: linhasConf.reduce((s, l) => s + (l.qtdConferidos ?? 0), 0),
+    totalPendentesRede: linhasConf.reduce((s, l) => s + (l.pendentes ?? 0), 0),
+    periodoInicio: dataInicio,
+    periodoFim: dataFim,
+  };
+}
+
+/**
  * Quebra de Caixa — mesmo mecanismo de `buscarConferenciaDoPeriodo`:
  * resolve o período (ciclo real 16→15) que contém `dataReferencia` via
  * `fontesPorPeriodo` (tipoBase='quebra_caixa'). Sem período coberto,
@@ -450,9 +644,17 @@ export async function buscarQuebraCaixaDoPeriodo(
 export async function buscarQuebraCaixaDoIntervalo(
   db: ReturnType<typeof getDb>,
   inicio: Date,
-  fim: Date
+  fim: Date,
+  unidadeFiltro?: CodigoUnidade
 ): Promise<ControlesCaixaData["quebraCaixa"]> {
   const vazio: ControlesCaixaData["quebraCaixa"] = { disponivel: false, totalGeral: null, porOperador: [], detalhado: [] };
+
+  let unidadeId: string | undefined;
+  if (unidadeFiltro) {
+    const [linha] = await db.select({ id: unidades.id }).from(unidades).where(eq(unidades.codigo, unidadeFiltro));
+    unidadeId = linha?.id;
+    if (!unidadeId) return vazio;
+  }
 
   const quebraRows = await db
     .select({
@@ -466,7 +668,7 @@ export async function buscarQuebraCaixaDoIntervalo(
     })
     .from(quebraCaixa)
     .innerJoin(unidades, eq(quebraCaixa.unidadeId, unidades.id))
-    .where(between(quebraCaixa.data, inicio, fim))
+    .where(unidadeId ? and(between(quebraCaixa.data, inicio, fim), eq(quebraCaixa.unidadeId, unidadeId)) : between(quebraCaixa.data, inicio, fim))
     .orderBy(desc(quebraCaixa.data));
 
   if (quebraRows.length === 0) return vazio;
@@ -509,13 +711,23 @@ export async function buscarQuebraCaixaDoIntervalo(
 export async function buscarPdvMaquininhaIntervalo(
   db: ReturnType<typeof getDb>,
   inicio: Date,
-  fim: Date
+  fim: Date,
+  unidadeFiltro?: CodigoUnidade
 ): Promise<ControlesCaixaData["pdvMaquininha"]> {
+  const vazio: ControlesCaixaData["pdvMaquininha"] = { disponivel: false, totalPdvRede: null, totalMaquininhaRede: null, diferencaRede: null, linhas: [] };
+
+  let unidadeId: string | undefined;
+  if (unidadeFiltro) {
+    const [linha] = await db.select({ id: unidades.id }).from(unidades).where(eq(unidades.codigo, unidadeFiltro));
+    unidadeId = linha?.id;
+    if (!unidadeId) return vazio;
+  }
+
   const pdvRows = await db
     .select({ codigo: unidades.codigo, valorPdv: pdvMaquininha.valorPdv, valorMaquininha: pdvMaquininha.valorMaquininha })
     .from(pdvMaquininha)
     .innerJoin(unidades, eq(pdvMaquininha.unidadeId, unidades.id))
-    .where(between(pdvMaquininha.data, inicio, fim));
+    .where(unidadeId ? and(between(pdvMaquininha.data, inicio, fim), eq(pdvMaquininha.unidadeId, unidadeId)) : between(pdvMaquininha.data, inicio, fim));
 
   const pdvPorLoja = new Map<string, { pdv: number; maq: number }>();
   for (const r of pdvRows) {
@@ -529,7 +741,6 @@ export async function buscarPdvMaquininhaIntervalo(
     totalPdv: arred(v.pdv),
     totalMaquininha: arred(v.maq),
     diferenca: arred(v.maq - v.pdv),
-    percentualSobreFaturamento: null,
   }));
   const totalPdvRede = arred(pdvLinhas.reduce((s, l) => s + l.totalPdv, 0));
   const totalMaquininhaRede = arred(pdvLinhas.reduce((s, l) => s + l.totalMaquininha, 0));
@@ -610,7 +821,6 @@ export async function buscarControlesCaixa(dataReferencia: Date): Promise<Contro
     totalPdv: arred(v.pdv),
     totalMaquininha: arred(v.maq),
     diferenca: arred(v.maq - v.pdv),
-    percentualSobreFaturamento: null,
   }));
   const totalPdvRede = arred(pdvLinhas.reduce((s, l) => s + l.totalPdv, 0));
   const totalMaquininhaRede = arred(pdvLinhas.reduce((s, l) => s + l.totalMaquininha, 0));

@@ -1,15 +1,28 @@
-"use client";
-
-import { useState, useTransition } from "react";
+import type { CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
 import { EstadoVazio } from "@/components/ui/EstadoVazio";
-import { dataDoInput } from "@/components/ui/FiltroDataReferencia";
-import { buscarQuebraCaixaIntervalo } from "@/lib/actions/buscarQuebraCaixaIntervalo";
-import type { ControlesCaixaData } from "@/lib/services/controlesCaixa";
+import type { ControlesCaixaData, QuebraOperadorLinha } from "@/lib/services/controlesCaixa";
 
 // timeZone: "UTC" — data pura (meia-noite UTC), mesmo padrão de ConferenciaTab.tsx.
 const formatadorData = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
 const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
+function arred(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+/** Mesmo agrupamento (CPF+Operador) já usado no serviço — recalculado aqui só quando o filtro de loja reduz o conjunto de lançamentos. */
+function agruparPorOperador(detalhado: ControlesCaixaData["quebraCaixa"]["detalhado"]): QuebraOperadorLinha[] {
+  const mapa = new Map<string, QuebraOperadorLinha>();
+  for (const r of detalhado) {
+    const chave = `${r.cpf}||${r.operador}`;
+    const atual = mapa.get(chave) ?? { operador: r.operador, cpf: r.cpf, quantidade: 0, valorTotal: 0 };
+    atual.quantidade += 1;
+    atual.valorTotal = arred(atual.valorTotal + r.valor);
+    mapa.set(chave, atual);
+  }
+  return [...mapa.values()].sort((a, b) => b.valorTotal - a.valorTotal);
+}
 
 /**
  * Sub-aba Quebra de Caixa (`renderQuebraCaixa`, linha 5336 do legado).
@@ -19,85 +32,33 @@ const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", curr
  * Operador, expansível Conferente/CPF). Ordenação apenas por Data
  * decrescente, sem reordenar por filial — igual ao legado.
  *
- * Filtro de período PERSONALIZADO (item 8 da etapa de revisão): opcional,
- * além dos filtros/ciclos existentes (`dados` = ciclo 16→15 já resolvido
- * pelo filtro de Data de Referência). Mesma regra de soma/agrupamento por
- * operador, só troca a origem do intervalo de datas.
+ * Filtro de Loja + Período (item 2 da etapa de revisão) vive no
+ * componente pai (`ControlesCaixaTabs`) — em modo "Data de referência" o
+ * filtro de loja é aplicado aqui, client-side, sobre `detalhado`
+ * (recalculando `porOperador`/totais a partir do subconjunto).
  */
-export function QuebraCaixaTab({ dados }: { dados: ControlesCaixaData["quebraCaixa"] }) {
-  const [intervalo, setIntervalo] = useState<{ inicio: string; fim: string } | null>(null);
-  const [dadosIntervalo, setDadosIntervalo] = useState<ControlesCaixaData["quebraCaixa"] | null>(null);
-  const [pendente, iniciarTransicao] = useTransition();
-
-  const dadosExibidos = dadosIntervalo ?? dados;
-
-  function aplicarIntervalo(inicio: string, fim: string) {
-    if (!inicio || !fim) return;
-    setIntervalo({ inicio, fim });
-    iniciarTransicao(async () => {
-      const resultado = await buscarQuebraCaixaIntervalo(dataDoInput(inicio), dataDoInput(fim));
-      setDadosIntervalo(resultado);
-    });
-  }
-
-  function limparIntervalo() {
-    setIntervalo(null);
-    setDadosIntervalo(null);
-  }
+export function QuebraCaixaTab({ dados, unidade }: { dados: ControlesCaixaData["quebraCaixa"]; unidade?: CodigoUnidade }) {
+  const detalhado = unidade ? dados.detalhado.filter((l) => l.unidade === unidade) : dados.detalhado;
+  const disponivel = unidade ? detalhado.length > 0 : dados.disponivel;
+  const porOperador = unidade ? agruparPorOperador(detalhado) : dados.porOperador;
+  const totalGeral = unidade ? arred(detalhado.reduce((s, l) => s + l.valor, 0)) : (dados.totalGeral ?? 0);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-ragga-blue/10 bg-ragga-surface px-4 py-3">
-        <div>
-          <label className="block text-xs font-medium text-foreground/60">Período personalizado — data inicial</label>
-          <input
-            type="date"
-            className="mt-1 rounded border border-ragga-blue/20 px-2 py-1 text-sm"
-            value={intervalo?.inicio ?? ""}
-            onChange={(e) => aplicarIntervalo(e.target.value, intervalo?.fim ?? e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-foreground/60">Data final</label>
-          <input
-            type="date"
-            className="mt-1 rounded border border-ragga-blue/20 px-2 py-1 text-sm"
-            value={intervalo?.fim ?? ""}
-            onChange={(e) => aplicarIntervalo(intervalo?.inicio ?? e.target.value, e.target.value)}
-          />
-        </div>
-        {intervalo && (
-          <button
-            type="button"
-            onClick={limparIntervalo}
-            className="rounded border border-ragga-blue/20 px-3 py-1.5 text-xs font-medium text-ragga-blue-dark hover:bg-ragga-blue/5"
-          >
-            Voltar para o ciclo/filtro padrão
-          </button>
-        )}
-        {pendente && <span className="text-xs text-foreground/50">Carregando...</span>}
-      </div>
-      {intervalo && (
-        <p className="text-xs text-foreground/50">
-          Mostrando período personalizado: {formatadorData.format(dataDoInput(intervalo.inicio))} até{" "}
-          {formatadorData.format(dataDoInput(intervalo.fim))}.
-        </p>
-      )}
-
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:max-w-md">
         <Card>
           <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Registros no período</p>
-          <p className={`mt-1 text-2xl font-semibold ${dadosExibidos.disponivel ? "text-ragga-blue-dark" : "text-foreground/30"}`}>
-            {dadosExibidos.disponivel ? dadosExibidos.detalhado.length : "—"}
+          <p className={`mt-1 text-2xl font-semibold ${disponivel ? "text-ragga-blue-dark" : "text-foreground/30"}`}>
+            {disponivel ? detalhado.length : "—"}
           </p>
-          {!dadosExibidos.disponivel && <p className="mt-2 text-xs text-foreground/50">Sem dados para o período</p>}
+          {!disponivel && <p className="mt-2 text-xs text-foreground/50">Sem dados para o período</p>}
         </Card>
         <Card>
           <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Total Geral de Quebra</p>
-          <p className={`mt-1 text-2xl font-semibold ${dadosExibidos.disponivel ? "text-ragga-blue-dark" : "text-foreground/30"}`}>
-            {dadosExibidos.disponivel ? formatadorMoeda.format(dadosExibidos.totalGeral ?? 0) : "—"}
+          <p className={`mt-1 text-2xl font-semibold ${disponivel ? "text-ragga-blue-dark" : "text-foreground/30"}`}>
+            {disponivel ? formatadorMoeda.format(totalGeral) : "—"}
           </p>
-          {!dadosExibidos.disponivel && <p className="mt-2 text-xs text-foreground/50">Sem dados para o período</p>}
+          {!disponivel && <p className="mt-2 text-xs text-foreground/50">Sem dados para o período</p>}
         </Card>
       </div>
 
@@ -114,10 +75,10 @@ export function QuebraCaixaTab({ dados }: { dados: ControlesCaixaData["quebraCai
               </tr>
             </thead>
             <tbody>
-              {dadosExibidos.porOperador.length === 0 ? (
+              {porOperador.length === 0 ? (
                 <EstadoVazio colSpan={4} />
               ) : (
-                dadosExibidos.porOperador.map((linha) => (
+                porOperador.map((linha) => (
                   <tr key={`${linha.cpf}-${linha.operador}`} className="border-b border-ragga-blue/5 last:border-0">
                     <td className="px-4 py-2 font-medium text-ragga-blue-dark">{linha.operador}</td>
                     <td className="px-4 py-2">{linha.cpf}</td>
@@ -147,10 +108,10 @@ export function QuebraCaixaTab({ dados }: { dados: ControlesCaixaData["quebraCai
               </tr>
             </thead>
             <tbody>
-              {dadosExibidos.detalhado.length === 0 ? (
+              {detalhado.length === 0 ? (
                 <EstadoVazio colSpan={7} />
               ) : (
-                dadosExibidos.detalhado.map((linha, i) => (
+                detalhado.map((linha, i) => (
                   <tr key={`${linha.unidade}-${i}`} className="border-b border-ragga-blue/5 last:border-0">
                     <td className="px-4 py-2">{formatadorData.format(linha.data)}</td>
                     <td className="px-4 py-2 font-medium text-ragga-blue-dark">{linha.unidade}</td>

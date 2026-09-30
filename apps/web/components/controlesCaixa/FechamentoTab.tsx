@@ -1,3 +1,4 @@
+import type { CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
 import { EstadoVazio } from "@/components/ui/EstadoVazio";
 import type { AberturaFechamentoData } from "@/lib/services/aberturaFechamento";
@@ -9,9 +10,20 @@ const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", curr
  * "Abertura e Fechamento" (tela separada removida do menu nesta etapa,
  * ver `lib/services/aberturaFechamento.server.ts`, cujo serviço não foi
  * alterado). Big numbers + tabela detalhada, sem tolerância inventada:
- * "Diferença" = caixas abertos − caixas fechados (= `emAberto`, já
+ * "Total de Caixas Operados" (rótulo corrigido nesta etapa — mesmo valor
+ * de sempre, `abertos`/`dados.abertos` = total de linhas com abertura
+ * registrada na data de referência; NÃO é "caixas atualmente em aberto",
+ * conceito que é `emAberto`, usado só na "Diferença" abaixo. Um caixa
+ * aberto em 28/09 com fechamento após a meia-noite, em 29/09, continua
+ * contado em 28/09 — é a mesma linha, chave por data de abertura);
+ * "Diferença" = caixas operados − caixas fechados (= `emAberto`, já
  * calculado no serviço); "Diferença nos fechamentos" = soma real de
  * `difFechamento` (diferença identificada pelo operador no fechamento).
+ *
+ * Filtro de Loja (item 2 da etapa de revisão, modo "Data de referência"):
+ * filtra `linhas` client-side e recalcula os big numbers a partir do
+ * subconjunto filtrado — a mesma fórmula já usada no serviço (nenhuma
+ * regra nova), só aplicada sobre menos linhas.
  */
 function BigNumberCard({ titulo, valor, disponivel }: { titulo: string; valor: string; disponivel: boolean }) {
   return (
@@ -24,10 +36,17 @@ function BigNumberCard({ titulo, valor, disponivel }: { titulo: string; valor: s
   );
 }
 
-export function FechamentoTab({ dados }: { dados: AberturaFechamentoData }) {
+export function FechamentoTab({ dados, unidade }: { dados: AberturaFechamentoData; unidade?: CodigoUnidade }) {
+  const linhas = unidade ? dados.linhas.filter((l) => l.unidade === unidade) : dados.linhas;
+  const disponivel = unidade ? linhas.length > 0 : dados.disponivel;
+  const abertos = unidade ? linhas.length : dados.abertos;
+  const fechados = unidade ? linhas.filter((l) => l.fechado).length : dados.fechados;
+  const emAberto = unidade ? linhas.filter((l) => l.situacao === "Aberto").length : dados.emAberto;
+  const diferencaFinanceira = unidade ? linhas.reduce((s, l) => s + (l.difFechamento ?? 0), 0) : dados.diferencaFinanceira;
+
   return (
     <div className="space-y-4">
-      {!dados.disponivel && (
+      {!disponivel && (
         <div className="rounded-lg border border-ragga-blue/15 bg-ragga-bg px-4 py-3 text-sm text-ragga-blue-dark">
           Sem dados para esta referência.
           {dados.dataMaisRecenteDisponivel && (
@@ -37,13 +56,13 @@ export function FechamentoTab({ dados }: { dados: AberturaFechamentoData }) {
       )}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <BigNumberCard titulo="Caixas Abertos" valor={String(dados.abertos)} disponivel={dados.disponivel} />
-        <BigNumberCard titulo="Caixas Fechados" valor={String(dados.fechados)} disponivel={dados.disponivel} />
-        <BigNumberCard titulo="Diferença" valor={String(dados.emAberto)} disponivel={dados.disponivel} />
+        <BigNumberCard titulo="Total de Caixas Operados" valor={String(abertos)} disponivel={disponivel} />
+        <BigNumberCard titulo="Caixas Fechados" valor={String(fechados)} disponivel={disponivel} />
+        <BigNumberCard titulo="Diferença" valor={String(emAberto)} disponivel={disponivel} />
         <BigNumberCard
           titulo="Diferença nos fechamentos realizados pelo operador"
-          valor={formatadorMoeda.format(dados.diferencaFinanceira)}
-          disponivel={dados.disponivel}
+          valor={formatadorMoeda.format(diferencaFinanceira)}
+          disponivel={disponivel}
         />
       </div>
 
@@ -64,10 +83,10 @@ export function FechamentoTab({ dados }: { dados: AberturaFechamentoData }) {
             </tr>
           </thead>
           <tbody>
-            {dados.linhas.length === 0 ? (
+            {linhas.length === 0 ? (
               <EstadoVazio colSpan={10} />
             ) : (
-              dados.linhas.map((linha, i) => (
+              linhas.map((linha, i) => (
                 <tr key={`${linha.unidade}-${linha.caixa}-${linha.movimento}-${i}`} className="border-b border-ragga-blue/5 last:border-0">
                   <td className="px-4 py-2 font-medium text-ragga-blue-dark">{linha.unidade}</td>
                   <td className="px-4 py-2">{linha.caixa}</td>

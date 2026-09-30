@@ -1,10 +1,22 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import type { CodigoUnidade } from "@painel/shared";
 import { classificarSemaforo, FAIXAS_BRINDES, FAIXAS_CANCELAMENTO, FAIXAS_COMPRA_DIRETA, type CorSemaforo } from "@/lib/rules/semaforos";
-import { dataDMenos1 } from "@/lib/rules/datas";
 import { getDb } from "@/lib/db/client";
-import { unidades, faturamento, brindes, cancelamentoSalao, cancelamentoDelivery, compraDireta, retiradaDeposito, formasPagamento } from "@/lib/db/schema";
-import { buscarControlesCaixa } from "@/lib/services/controlesCaixa";
+import {
+  unidades,
+  faturamento,
+  brindes,
+  cancelamentoSalao,
+  cancelamentoDelivery,
+  compraDireta,
+  retiradaDeposito,
+  formasPagamento,
+  fechamentoCaixa,
+  pdvMaquininha,
+  troco,
+  conferencia,
+  quebraCaixa,
+} from "@/lib/db/schema";
 import { agregarEmBuckets } from "@/lib/rules/formasPagamento";
 import type { FormaPagamentoBuckets } from "@/lib/services/fechamentoWhatsapp";
 
@@ -14,12 +26,29 @@ import type { FormaPagamentoBuckets } from "@/lib/services/fechamentoWhatsapp";
  * funcional: hero Faturamento, cards de Indicadores/Retiradas/Controles,
  * tabela "Detalhamento por loja").
  *
+ * Regra HÍBRIDA (correção desta etapa) — duas categorias de card:
+ *
+ * 1. Indicadores financeiros/operacionais (Faturamento, Formas de
+ *    Pagamento, Brindes, Cancelamento Salão, Cancelamento Delivery,
+ *    Retirada Compra Direta, Retirada p/ Depósito): usam EXATAMENTE a
+ *    `dataReferencia` selecionada no filtro — sem D-1, sem D-2, sem
+ *    fallback. Sem registro na data exata, o card fica indisponível
+ *    ("Sem dados"), nunca busca um dia anterior nem mostra R$ 0,00.
+ *
+ * 2. Controles de Caixa (Fechamento/PDV×Maquininha/Troco/Conferência/
+ *    Quebra) — EXCEÇÃO: cada card busca sua própria "última data
+ *    disponível <= dataReferencia" (`ultimaDataAte`, MAX(data) real da
+ *    tabela — nunca uma subtração de dias fixa), e mostra os dados
+ *    exatamente dessa data. Cada bloco pode ter uma data diferente;
+ *    `dataRegistro` no retorno informa qual foi usada, para a tela
+ *    exibir "Último registro: DD/MM" quando diferir da data
+ *    selecionada. Consultas independentes desta camada (funções
+ *    `buscar*Resumo` abaixo) — não reaproveitam `buscarControlesCaixa`
+ *    nem suas regras de janela (D-1/D-2/semana real/ciclo 16→15), que
+ *    continuam intocadas na tela /controles-caixa.
+ *
  * Sem `DATABASE_URL`, retorna `disponivel: false` em tudo — nenhum dado
- * inventado. Com `DATABASE_URL`, consulta o banco real via `getDb()` +
- * `lib/db/schema`, usando D-1 (`dataDMenos1`, já validada/testada) para
- * Faturamento/Brindes/Cancelamentos/Compra Direta/Retirada Depósito —
- * exatamente a mesma janela usada pelo legado (ver auditoria funcional,
- * `renderVisaoGeral`, linha 3714).
+ * inventado.
  *
  * NESTA ETAPA: Faturamento, Brindes, Cancelamento Salão, Cancelamento
  * Delivery, Retirada Compra Direta e Retirada para Depósito (filtro
@@ -75,11 +104,21 @@ export interface VisaoGeralData {
     dataRegistro?: Date;
     ultimoRegistroDisponivel?: boolean;
   };
-  fechamento: { disponivel: boolean; caixasAbertos?: number };
-  pdvMaquininha: { disponivel: boolean; diferenca?: number };
-  troco: { disponivel: boolean; divergencias?: number };
-  conferencia: { disponivel: boolean; percentualConferido?: number; emAtraso?: number };
-  quebraCaixa: { disponivel: boolean; total?: number };
+  /**
+   * Controles de Caixa (item 2 da correção híbrida): EXCEÇÃO à regra de
+   * "data exata" acima — cada card busca sua própria "última data
+   * disponível <= data de referência selecionada", nunca a data exata
+   * nem D-1/D-2 fixo. `dataRegistro` informa qual foi essa data real
+   * (mostrado como "Último registro: DD/MM" quando difere da data
+   * selecionada). Consultas independentes desta camada — não reaproveitam
+   * `buscarControlesCaixa`/regras de semana real/ciclo 16→15 da tela
+   * /controles-caixa, que continuam intocadas.
+   */
+  fechamento: { disponivel: boolean; totalCaixasOperados?: number; dataRegistro?: Date };
+  pdvMaquininha: { disponivel: boolean; diferenca?: number; dataRegistro?: Date };
+  troco: { disponivel: boolean; divergencias?: number; dataRegistro?: Date };
+  conferencia: { disponivel: boolean; percentualConferido?: number; emAtraso?: number; dataRegistro?: Date };
+  quebraCaixa: { disponivel: boolean; total?: number; dataRegistro?: Date };
   detalhamentoPorLoja: LinhaDetalhamentoLoja[];
 }
 
@@ -125,51 +164,82 @@ function totalDoMapa(mapa: Map<string, number>): number {
   return total;
 }
 
-interface ResultadoComFallback {
-  porLoja: Map<string, number>;
-  total: number;
-  dataRegistro: Date | null;
-  ultimoRegistroDisponivel: boolean;
-}
-
-/** Compara só a data (ano/mês/dia em UTC), ignorando hora — evita marcar como "fallback" um registro que já é exatamente a data de referência. */
-function mesmoDiaUTC(a: Date, b: Date): boolean {
-  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+function arred(v: number): number {
+  return Math.round(v * 100) / 100;
 }
 
 /**
- * Card da Visão Geral com fallback honesto (item 4 da etapa de revisão):
- * recebe o mapa por loja JÁ CONSULTADO em D-1 (mesma consulta reaproveitada
- * pela tabela "Detalhamento por loja", que continua só em D-1, sem
- * fallback); se esse mapa vier vazio, procura a data mais recente com
- * QUALQUER registro na tabela inteira e usa essa data, marcando
- * `ultimoRegistroDisponivel` — nunca inventa valor nem transforma
- * ausência em zero; se a tabela estiver genuinamente vazia, `dataRegistro`
- * fica `null` e `disponivel` continua `false`.
+ * "Última data disponível <= data de referência" (item 2 da correção
+ * híbrida) — MAX(data) real da tabela, nunca uma subtração de dias. Usada
+ * só pelos 5 cards resumidos de Controles de Caixa na Visão Geral; a
+ * tela /controles-caixa continua com suas próprias regras de janela
+ * (D-1/D-2/semana real/ciclo 16→15), não tocadas aqui.
  */
-async function fallbackSeVazio(
+async function ultimaDataAte(
   db: ReturnType<typeof getDb>,
-  tabela: typeof brindes | typeof cancelamentoSalao | typeof cancelamentoDelivery | typeof compraDireta | typeof faturamento,
-  d1Map: Map<string, number>,
-  d1: Date
-): Promise<ResultadoComFallback> {
-  if (d1Map.size > 0) {
-    return { porLoja: d1Map, total: totalDoMapa(d1Map), dataRegistro: d1, ultimoRegistroDisponivel: false };
-  }
+  tabela: typeof fechamentoCaixa | typeof pdvMaquininha | typeof troco | typeof conferencia | typeof quebraCaixa,
+  dataLimite: Date
+): Promise<Date | null> {
+  const [{ maxData }] = await db
+    .select({ maxData: sql<string | null>`max(${tabela.data})` })
+    .from(tabela)
+    .where(lte(tabela.data, dataLimite));
+  return maxData ? new Date(maxData) : null;
+}
 
-  const [{ maxData }] = await db.select({ maxData: sql<string | null>`max(${tabela.data})` }).from(tabela);
-  if (!maxData) {
-    return { porLoja: new Map(), total: 0, dataRegistro: null, ultimoRegistroDisponivel: false };
-  }
+/**
+ * Mesmo conceito do card "Total de Caixas Operados" da aba Controles de
+ * Caixa → Fechamento (`FechamentoTab.tsx`/`aberturaFechamento.server.ts`:
+ * total de linhas com abertura registrada na data — não "caixas
+ * atualmente em aberto"). Rótulo corrigido nesta etapa para a Visão
+ * Geral consumir o mesmo total, sem recalcular nada de novo.
+ */
+async function buscarFechamentoResumo(db: ReturnType<typeof getDb>, dataLimite: Date): Promise<VisaoGeralData["fechamento"]> {
+  const dataRegistro = await ultimaDataAte(db, fechamentoCaixa, dataLimite);
+  if (!dataRegistro) return { disponivel: false };
+  const rows = await db.select({ situacao: fechamentoCaixa.situacao }).from(fechamentoCaixa).where(eq(fechamentoCaixa.data, dataRegistro));
+  return { disponivel: true, totalCaixasOperados: rows.length, dataRegistro };
+}
 
-  const dataFallback = new Date(maxData);
-  const porLojaFallback = await somaPorLoja(db, tabela, dataFallback);
-  return {
-    porLoja: porLojaFallback,
-    total: totalDoMapa(porLojaFallback),
-    dataRegistro: dataFallback,
-    ultimoRegistroDisponivel: !mesmoDiaUTC(dataFallback, d1),
-  };
+async function buscarPdvMaquininhaResumo(db: ReturnType<typeof getDb>, dataLimite: Date): Promise<VisaoGeralData["pdvMaquininha"]> {
+  const dataRegistro = await ultimaDataAte(db, pdvMaquininha, dataLimite);
+  if (!dataRegistro) return { disponivel: false };
+  const rows = await db
+    .select({ valorPdv: pdvMaquininha.valorPdv, valorMaquininha: pdvMaquininha.valorMaquininha })
+    .from(pdvMaquininha)
+    .where(eq(pdvMaquininha.data, dataRegistro));
+  const totalPdv = rows.reduce((s, r) => s + Number(r.valorPdv), 0);
+  const totalMaquininha = rows.reduce((s, r) => s + Number(r.valorMaquininha), 0);
+  return { disponivel: true, diferenca: arred(totalMaquininha - totalPdv), dataRegistro };
+}
+
+async function buscarTrocoResumo(db: ReturnType<typeof getDb>, dataLimite: Date): Promise<VisaoGeralData["troco"]> {
+  const dataRegistro = await ultimaDataAte(db, troco, dataLimite);
+  if (!dataRegistro) return { disponivel: false };
+  const rows = await db.select({ diferenca: troco.diferenca }).from(troco).where(eq(troco.data, dataRegistro));
+  return { disponivel: true, divergencias: rows.filter((r) => Number(r.diferenca) !== 0).length, dataRegistro };
+}
+
+async function buscarConferenciaResumo(db: ReturnType<typeof getDb>, dataLimite: Date): Promise<VisaoGeralData["conferencia"]> {
+  const dataRegistro = await ultimaDataAte(db, conferencia, dataLimite);
+  if (!dataRegistro) return { disponivel: false };
+  const rows = await db
+    .select({ qtdCadastrados: conferencia.qtdCadastrados, qtdConferidos: conferencia.qtdConferidos, emAtraso: conferencia.emAtraso })
+    .from(conferencia)
+    .where(eq(conferencia.data, dataRegistro));
+  const comCadastro = rows.filter((r) => r.qtdCadastrados > 0);
+  const percentualConferido =
+    comCadastro.length > 0
+      ? comCadastro.reduce((s, r) => s + ((r.qtdConferidos ?? 0) / r.qtdCadastrados) * 100, 0) / comCadastro.length
+      : 0;
+  return { disponivel: true, percentualConferido, emAtraso: rows.filter((r) => r.emAtraso).length, dataRegistro };
+}
+
+async function buscarQuebraCaixaResumo(db: ReturnType<typeof getDb>, dataLimite: Date): Promise<VisaoGeralData["quebraCaixa"]> {
+  const dataRegistro = await ultimaDataAte(db, quebraCaixa, dataLimite);
+  if (!dataRegistro) return { disponivel: false };
+  const rows = await db.select({ valor: quebraCaixa.valor }).from(quebraCaixa).where(eq(quebraCaixa.data, dataRegistro));
+  return { disponivel: true, total: arred(rows.reduce((s, r) => s + Number(r.valor), 0)), dataRegistro };
 }
 
 export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeralData> {
@@ -196,30 +266,57 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
   if (!conectado) return base;
 
   const db = getDb();
-  const d1 = dataDMenos1(dataReferencia);
 
-  const [faturamentoPorLoja, brindesPorLoja, cancSalaoPorLoja, cancDeliveryPorLoja, compraDiretaPorLoja, retiradaDepositoLinhas, controlesCaixa, formasRows] =
-    await Promise.all([
-      somaPorLoja(db, faturamento, d1),
-      somaPorLoja(db, brindes, d1),
-      somaPorLoja(db, cancelamentoSalao, d1),
-      somaPorLoja(db, cancelamentoDelivery, d1),
-      somaPorLoja(db, compraDireta, d1),
-      // Retirada Depósito: filtro `motivo = 'DEPÓSITO'` — corrigido nesta etapa (o valor
-      // persistido tem acento; o literal sem acento nunca batia, causando "Sem dados" mesmo
-      // com registros reais — confirmado via consulta direta ao banco). Mesma regra/coluna,
-      // não é um valor novo nem uma reclassificação.
-      db
-        .select({ codigo: unidades.codigo, total: sql<string>`coalesce(sum(${retiradaDeposito.valor}), 0)` })
-        .from(retiradaDeposito)
-        .innerJoin(unidades, eq(retiradaDeposito.unidadeId, unidades.id))
-        .where(and(eq(retiradaDeposito.data, d1), eq(retiradaDeposito.motivo, "DEPÓSITO")))
-        .groupBy(unidades.codigo),
-      // Reaproveita a mesma camada real já validada em /controles-caixa — apenas resume os totais aqui.
-      buscarControlesCaixa(dataReferencia),
-      // Formas de Pagamento: mesma janela D-1 do Faturamento (mesma fonte, VENDAS.xlsx).
-      db.select({ forma: formasPagamento.forma, valor: formasPagamento.valor }).from(formasPagamento).where(eq(formasPagamento.data, d1)),
-    ]);
+  const [
+    faturamentoPorLoja,
+    brindesPorLoja,
+    cancSalaoPorLoja,
+    cancDeliveryPorLoja,
+    compraDiretaPorLoja,
+    retiradaDepositoLinhas,
+    retiradaDepositoBaseRows,
+    fechamentoResumo,
+    pdvMaquininhaResumo,
+    trocoResumo,
+    conferenciaResumo,
+    quebraCaixaResumo,
+    formasRows,
+  ] = await Promise.all([
+    somaPorLoja(db, faturamento, dataReferencia),
+    somaPorLoja(db, brindes, dataReferencia),
+    somaPorLoja(db, cancelamentoSalao, dataReferencia),
+    somaPorLoja(db, cancelamentoDelivery, dataReferencia),
+    somaPorLoja(db, compraDireta, dataReferencia),
+    // Retirada Depósito: filtro `motivo = 'DEPÓSITO'` — corrigido em etapa anterior (o valor
+    // persistido tem acento; o literal sem acento nunca batia, causando "Sem dados" mesmo
+    // com registros reais — confirmado via consulta direta ao banco). Mesma regra/coluna,
+    // não é um valor novo nem uma reclassificação.
+    db
+      .select({ codigo: unidades.codigo, total: sql<string>`coalesce(sum(${retiradaDeposito.valor}), 0)` })
+      .from(retiradaDeposito)
+      .innerJoin(unidades, eq(retiradaDeposito.unidadeId, unidades.id))
+      .where(and(eq(retiradaDeposito.data, dataReferencia), eq(retiradaDeposito.motivo, "DEPÓSITO")))
+      .groupBy(unidades.codigo),
+    // Existência da BASE (não da data) — distingue "base nunca carregada" de "sem retirada
+    // nessa data específica" (item 1 desta etapa): só quando a base tem histórico é que a
+    // ausência na data selecionada vira R$ 0,00 real; sem nenhum registro em lugar nenhum,
+    // continua "Sem dados disponíveis" (nenhuma regra de data alterada).
+    db
+      .select({ total: sql<string>`count(*)` })
+      .from(retiradaDeposito)
+      .where(eq(retiradaDeposito.motivo, "DEPÓSITO")),
+    // Controles de Caixa (item 2 da correção híbrida): EXCEÇÃO — cada card busca sua própria
+    // "última data disponível <= dataReferencia" (consultas independentes desta camada, ver
+    // funções acima; não reaproveitam `buscarControlesCaixa`/regras de semana real/ciclo 16→15
+    // da tela /controles-caixa, que continuam intocadas).
+    buscarFechamentoResumo(db, dataReferencia),
+    buscarPdvMaquininhaResumo(db, dataReferencia),
+    buscarTrocoResumo(db, dataReferencia),
+    buscarConferenciaResumo(db, dataReferencia),
+    buscarQuebraCaixaResumo(db, dataReferencia),
+    // Formas de Pagamento: mesma data exata do Faturamento (mesma fonte, VENDAS.xlsx).
+    db.select({ forma: formasPagamento.forma, valor: formasPagamento.valor }).from(formasPagamento).where(eq(formasPagamento.data, dataReferencia)),
+  ]);
 
   const formasPagamentoData: VisaoGeralData["formasPagamento"] =
     formasRows.length > 0
@@ -229,6 +326,7 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
   const retiradaDepositoPorLoja = new Map(retiradaDepositoLinhas.map((l) => [l.codigo, Number(l.total)]));
 
   const totalRetiradaDeposito = totalDoMapa(retiradaDepositoPorLoja);
+  const baseRetiradaDepositoExiste = Number(retiradaDepositoBaseRows[0]?.total ?? 0) > 0;
 
   const unidadesComDado = new Set<string>([
     ...faturamentoPorLoja.keys(),
@@ -238,152 +336,80 @@ export async function buscarVisaoGeral(dataReferencia: Date): Promise<VisaoGeral
     ...compraDiretaPorLoja.keys(),
   ]);
 
+  // `unidadesComDado` já é a prova de existência: uma loja só entra nesse conjunto se
+  // apareceu em pelo menos uma das 5 bases naquela data (item da correção de "zero vs.
+  // sem dados" desta etapa). Por isso, para as 4 colunas de contagem de eventos (Brindes,
+  // Cancelamentos, Compra Direta), a AUSÊNCIA da loja no mapa específico daquele indicador
+  // não significa "sem dado" — significa "zero ocorrências reais" (ex.: loja operou e
+  // vendeu naquele dia, mas não teve nenhum brinde) — mostra R$ 0,00/0,00%/semáforo
+  // normalmente, nunca "—". "—" fica reservado só para quando a loja não tem NENHUM
+  // registro em nenhuma das 5 bases naquela data (não entra em `unidadesComDado`).
+  // Faturamento continua exigindo seu próprio registro (não é uma contagem de eventos —
+  // não existe "faturamento zero real" sem um lançamento correspondente).
   const detalhamentoPorLoja: LinhaDetalhamentoLoja[] = [...unidadesComDado].map((codigo) => {
     const fatLoja = faturamentoPorLoja.get(codigo) ?? 0;
     const percentualLoja = (valor: number) => (fatLoja > 0 ? (valor / fatLoja) * 100 : 0);
+    const valorCompraDireta = compraDiretaPorLoja.get(codigo) ?? 0;
+    const valorBrindes = brindesPorLoja.get(codigo) ?? 0;
+    const valorCancSalao = cancSalaoPorLoja.get(codigo) ?? 0;
+    const valorCancDelivery = cancDeliveryPorLoja.get(codigo) ?? 0;
     return {
       unidade: codigo as CodigoUnidade,
       faturamento: faturamentoPorLoja.has(codigo) ? { disponivel: true, valor: fatLoja } : { disponivel: false },
-      retiradaCompraDireta: compraDiretaPorLoja.has(codigo)
-        ? comSemaforo(compraDiretaPorLoja.get(codigo)!, percentualLoja(compraDiretaPorLoja.get(codigo)!), FAIXAS_COMPRA_DIRETA)
-        : indisponivel(),
-      brindes: brindesPorLoja.has(codigo)
-        ? comSemaforo(brindesPorLoja.get(codigo)!, percentualLoja(brindesPorLoja.get(codigo)!), FAIXAS_BRINDES)
-        : indisponivel(),
-      cancelamentoSalao: cancSalaoPorLoja.has(codigo)
-        ? comSemaforo(cancSalaoPorLoja.get(codigo)!, percentualLoja(cancSalaoPorLoja.get(codigo)!), FAIXAS_CANCELAMENTO)
-        : indisponivel(),
-      cancelamentoDelivery: cancDeliveryPorLoja.has(codigo)
-        ? comSemaforo(cancDeliveryPorLoja.get(codigo)!, percentualLoja(cancDeliveryPorLoja.get(codigo)!), FAIXAS_CANCELAMENTO)
-        : indisponivel(),
+      retiradaCompraDireta: comSemaforo(valorCompraDireta, percentualLoja(valorCompraDireta), FAIXAS_COMPRA_DIRETA),
+      brindes: comSemaforo(valorBrindes, percentualLoja(valorBrindes), FAIXAS_BRINDES),
+      cancelamentoSalao: comSemaforo(valorCancSalao, percentualLoja(valorCancSalao), FAIXAS_CANCELAMENTO),
+      cancelamentoDelivery: comSemaforo(valorCancDelivery, percentualLoja(valorCancDelivery), FAIXAS_CANCELAMENTO),
     };
   });
 
-  // --- Fallback honesto para os CARDS de topo (item 4 da etapa de revisão) ---
-  // A tabela "Detalhamento por loja" acima NÃO usa este fallback — continua
-  // só em D-1 (mapas *PorLoja originais), exatamente como antes.
-  async function faturamentoNaData(data: Date): Promise<number> {
-    const mapa = await somaPorLoja(db, faturamento, data);
-    return totalDoMapa(mapa);
+  // --- Cards de topo: EXATAMENTE a data de referência selecionada, sem fallback ---
+  // Todos os indicadores usam a mesma `dataReferencia`, então o percentual
+  // sobre faturamento sempre compara valores da mesma data (nunca cruza
+  // datas diferentes). Se não houver registro na data exata, o card fica
+  // indisponível — nenhuma busca automática por um dia anterior.
+  const faturamentoTotal = totalDoMapa(faturamentoPorLoja);
+  const brindesTotal = totalDoMapa(brindesPorLoja);
+  const cancSalaoTotal = totalDoMapa(cancSalaoPorLoja);
+  const cancDeliveryTotal = totalDoMapa(cancDeliveryPorLoja);
+  const compraDiretaTotal = totalDoMapa(compraDiretaPorLoja);
+
+  function percentualSobreFaturamento(total: number): number {
+    return faturamentoTotal > 0 ? (total / faturamentoTotal) * 100 : 0;
   }
-
-  const [faturamentoResultado, brindesResultado, cancSalaoResultado, cancDeliveryResultado, compraDiretaResultado] = await Promise.all([
-    fallbackSeVazio(db, faturamento, faturamentoPorLoja, d1),
-    fallbackSeVazio(db, brindes, brindesPorLoja, d1),
-    fallbackSeVazio(db, cancelamentoSalao, cancSalaoPorLoja, d1),
-    fallbackSeVazio(db, cancelamentoDelivery, cancDeliveryPorLoja, d1),
-    fallbackSeVazio(db, compraDireta, compraDiretaPorLoja, d1),
-  ]);
-
-  let retiradaDepositoResultado: ResultadoComFallback;
-  if (retiradaDepositoPorLoja.size > 0) {
-    retiradaDepositoResultado = { porLoja: retiradaDepositoPorLoja, total: totalRetiradaDeposito, dataRegistro: d1, ultimoRegistroDisponivel: false };
-  } else {
-    const [{ maxData: maxDataDeposito }] = await db
-      .select({ maxData: sql<string | null>`max(${retiradaDeposito.data})` })
-      .from(retiradaDeposito)
-      .where(eq(retiradaDeposito.motivo, "DEPÓSITO"));
-    if (!maxDataDeposito) {
-      retiradaDepositoResultado = { porLoja: new Map(), total: 0, dataRegistro: null, ultimoRegistroDisponivel: false };
-    } else {
-      const dataFallbackDeposito = new Date(maxDataDeposito);
-      const rowsFallback = await db
-        .select({ codigo: unidades.codigo, total: sql<string>`coalesce(sum(${retiradaDeposito.valor}), 0)` })
-        .from(retiradaDeposito)
-        .innerJoin(unidades, eq(retiradaDeposito.unidadeId, unidades.id))
-        .where(and(eq(retiradaDeposito.data, dataFallbackDeposito), eq(retiradaDeposito.motivo, "DEPÓSITO")))
-        .groupBy(unidades.codigo);
-      const porLojaFallback = new Map(rowsFallback.map((r) => [r.codigo, Number(r.total)]));
-      retiradaDepositoResultado = {
-        porLoja: porLojaFallback,
-        total: totalDoMapa(porLojaFallback),
-        dataRegistro: dataFallbackDeposito,
-        ultimoRegistroDisponivel: !mesmoDiaUTC(dataFallbackDeposito, d1),
-      };
-    }
-  }
-
-  /** % sobre faturamento usando o faturamento NA MESMA DATA do indicador (nunca cruza datas diferentes sem avisar). */
-  async function percentualParaIndicador(resultado: ResultadoComFallback): Promise<number> {
-    if (resultado.dataRegistro === null) return 0;
-    if (faturamentoResultado.dataRegistro && resultado.dataRegistro.getTime() === faturamentoResultado.dataRegistro.getTime()) {
-      return faturamentoResultado.total > 0 ? (resultado.total / faturamentoResultado.total) * 100 : 0;
-    }
-    const fatNaData = await faturamentoNaData(resultado.dataRegistro);
-    return fatNaData > 0 ? (resultado.total / fatNaData) * 100 : 0;
-  }
-
-  const [percentualBrindesTopo, percentualCancSalaoTopo, percentualCancDeliveryTopo, percentualCompraDiretaTopo] = await Promise.all([
-    percentualParaIndicador(brindesResultado),
-    percentualParaIndicador(cancSalaoResultado),
-    percentualParaIndicador(cancDeliveryResultado),
-    percentualParaIndicador(compraDiretaResultado),
-  ]);
 
   return {
     ...base,
-    faturamento: faturamentoResultado.dataRegistro
-      ? {
-          disponivel: true,
-          valor: faturamentoResultado.total,
-          dataRegistro: faturamentoResultado.dataRegistro,
-          ultimoRegistroDisponivel: faturamentoResultado.ultimoRegistroDisponivel,
-        }
-      : { disponivel: false },
+    faturamento:
+      faturamentoPorLoja.size > 0 ? { disponivel: true, valor: faturamentoTotal, dataRegistro: dataReferencia } : { disponivel: false },
     formasPagamento: formasPagamentoData,
-    brindes: brindesResultado.dataRegistro
-      ? comSemaforo(brindesResultado.total, percentualBrindesTopo, FAIXAS_BRINDES, {
-          dataRegistro: brindesResultado.dataRegistro,
-          ultimoRegistroDisponivel: brindesResultado.ultimoRegistroDisponivel,
-        })
-      : indisponivel(),
-    cancelamentoSalao: cancSalaoResultado.dataRegistro
-      ? comSemaforo(cancSalaoResultado.total, percentualCancSalaoTopo, FAIXAS_CANCELAMENTO, {
-          dataRegistro: cancSalaoResultado.dataRegistro,
-          ultimoRegistroDisponivel: cancSalaoResultado.ultimoRegistroDisponivel,
-        })
-      : indisponivel(),
-    cancelamentoDelivery: cancDeliveryResultado.dataRegistro
-      ? comSemaforo(cancDeliveryResultado.total, percentualCancDeliveryTopo, FAIXAS_CANCELAMENTO, {
-          dataRegistro: cancDeliveryResultado.dataRegistro,
-          ultimoRegistroDisponivel: cancDeliveryResultado.ultimoRegistroDisponivel,
-        })
-      : indisponivel(),
-    retiradaCompraDireta: compraDiretaResultado.dataRegistro
-      ? comSemaforo(compraDiretaResultado.total, percentualCompraDiretaTopo, FAIXAS_COMPRA_DIRETA, {
-          dataRegistro: compraDiretaResultado.dataRegistro,
-          ultimoRegistroDisponivel: compraDiretaResultado.ultimoRegistroDisponivel,
-        })
-      : indisponivel(),
-    retiradaDeposito: retiradaDepositoResultado.dataRegistro
-      ? {
-          disponivel: true,
-          valorDia: retiradaDepositoResultado.total,
-          dataRegistro: retiradaDepositoResultado.dataRegistro,
-          ultimoRegistroDisponivel: retiradaDepositoResultado.ultimoRegistroDisponivel,
-        }
+    brindes:
+      brindesPorLoja.size > 0
+        ? comSemaforo(brindesTotal, percentualSobreFaturamento(brindesTotal), FAIXAS_BRINDES, { dataRegistro: dataReferencia })
+        : indisponivel(),
+    cancelamentoSalao:
+      cancSalaoPorLoja.size > 0
+        ? comSemaforo(cancSalaoTotal, percentualSobreFaturamento(cancSalaoTotal), FAIXAS_CANCELAMENTO, { dataRegistro: dataReferencia })
+        : indisponivel(),
+    cancelamentoDelivery:
+      cancDeliveryPorLoja.size > 0
+        ? comSemaforo(cancDeliveryTotal, percentualSobreFaturamento(cancDeliveryTotal), FAIXAS_CANCELAMENTO, { dataRegistro: dataReferencia })
+        : indisponivel(),
+    retiradaCompraDireta:
+      compraDiretaPorLoja.size > 0
+        ? comSemaforo(compraDiretaTotal, percentualSobreFaturamento(compraDiretaTotal), FAIXAS_COMPRA_DIRETA, { dataRegistro: dataReferencia })
+        : indisponivel(),
+    // Item 1 desta etapa: a BASE de Retirada Depósito já está carregada — ausência de
+    // registro na data selecionada é "não houve retirada" (R$ 0,00 real), não "sem dados".
+    // Só fica indisponível se a base como um todo nunca teve nenhum registro carregado.
+    retiradaDeposito: baseRetiradaDepositoExiste
+      ? { disponivel: true, valorDia: totalRetiradaDeposito, dataRegistro: dataReferencia }
       : { disponivel: false },
-    fechamento: {
-      disponivel: controlesCaixa.fechamento.disponivel,
-      caixasAbertos: controlesCaixa.fechamento.caixasEmAberto ?? undefined,
-    },
-    pdvMaquininha: {
-      disponivel: controlesCaixa.pdvMaquininha.disponivel,
-      diferenca: controlesCaixa.pdvMaquininha.diferencaRede ?? undefined,
-    },
-    troco: {
-      disponivel: controlesCaixa.troco.disponivel,
-      divergencias: controlesCaixa.troco.divergencias ?? undefined,
-    },
-    conferencia: {
-      disponivel: controlesCaixa.conferencia.disponivel,
-      percentualConferido: controlesCaixa.conferencia.percentualConferidoRede ?? undefined,
-      emAtraso: controlesCaixa.conferencia.totalEmAtraso ?? undefined,
-    },
-    quebraCaixa: {
-      disponivel: controlesCaixa.quebraCaixa.disponivel,
-      total: controlesCaixa.quebraCaixa.totalGeral ?? undefined,
-    },
+    fechamento: fechamentoResumo,
+    pdvMaquininha: pdvMaquininhaResumo,
+    troco: trocoResumo,
+    conferencia: conferenciaResumo,
+    quebraCaixa: quebraCaixaResumo,
     detalhamentoPorLoja,
   };
 }

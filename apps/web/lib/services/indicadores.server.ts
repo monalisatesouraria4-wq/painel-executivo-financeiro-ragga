@@ -1,5 +1,5 @@
-import { eq, sql } from "drizzle-orm";
-import { UNIDADES } from "@painel/shared";
+import { and, between, eq, sql } from "drizzle-orm";
+import { UNIDADES, type CodigoUnidade } from "@painel/shared";
 import { classificarSemaforo } from "@/lib/rules/semaforos";
 import { dataDMenos1 } from "@/lib/rules/datas";
 import { getDb } from "@/lib/db/client";
@@ -13,10 +13,9 @@ import { buscarConfigFonte, type FonteIndicador, type IndicadorData, type Motivo
  * client (ver nota em `indicadores.ts`).
  *
  * Com `DATABASE_URL`: janela D-1 (`dataDMenos1`, mesma regra já usada em
- * `visaoGeral.ts` — modo "Dia" do legado, o padrão). Filtros de período
- * Semana/Mês/Personalizado e de loja continuam só como controles de UI
- * (etapa futura). Ordenação de "Por unidade": ordem canônica de
- * `UNIDADES`, nunca por valor (confirmado no legado, `compareFilial`).
+ * `visaoGeral.ts` — modo "Dia" do legado, o padrão). Ordenação de "Por
+ * unidade": ordem canônica de `UNIDADES`, nunca por valor (confirmado no
+ * legado, `compareFilial`).
  *
  * Sem DATABASE_URL: `disponivel: false` — nenhum valor inventado.
  */
@@ -28,7 +27,21 @@ const TABELA_POR_FONTE = {
   compraDireta,
 } as const;
 
-export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Date = new Date()): Promise<IndicadorData> {
+/**
+ * Núcleo compartilhado — recebe a janela de datas JÁ DESLOCADA (D-1
+ * aplicado pelo chamador) e um filtro de loja opcional. `buscarIndicador`
+ * (assinatura antiga, usada por Visão Geral/Análise Gerencial/Fechamento
+ * Semanal-WhatsApp) e `buscarIndicadorPeriodo` (novo, item 2 da etapa de
+ * revisão — filtro de Loja + Período em Indicadores/Retiradas) só
+ * preparam a janela e delegam aqui — mesma consulta, mesmo cálculo,
+ * nenhuma regra duplicada.
+ */
+async function buscarIndicadorJanela(
+  fonte: FonteIndicador,
+  dataInicioJanela: Date,
+  dataFimJanela: Date,
+  unidadeFiltro?: CodigoUnidade
+): Promise<IndicadorData> {
   const conectado = Boolean(process.env.DATABASE_URL);
   const config = buscarConfigFonte(fonte);
 
@@ -48,19 +61,27 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
   if (!conectado) return base;
 
   const db = getDb();
-  const d1 = dataDMenos1(dataReferencia);
   const tabela = TABELA_POR_FONTE[fonte];
+  const filtroJanela = between(tabela.data, dataInicioJanela, dataFimJanela);
+  const filtroJanelaFaturamento = between(faturamento.data, dataInicioJanela, dataFimJanela);
+
+  let unidadeId: string | undefined;
+  if (unidadeFiltro) {
+    const [linha] = await db.select({ id: unidades.id }).from(unidades).where(eq(unidades.codigo, unidadeFiltro));
+    unidadeId = linha?.id;
+    if (!unidadeId) return base; // loja desconhecida — nunca inventa dado
+  }
 
   const [{ total: faturamentoTotalStr }] = await db
     .select({ total: sql<string>`coalesce(sum(${faturamento.valor}), 0)` })
     .from(faturamento)
-    .where(eq(faturamento.data, d1));
+    .where(unidadeId ? and(filtroJanelaFaturamento, eq(faturamento.unidadeId, unidadeId)) : filtroJanelaFaturamento);
   const faturamentoTotal = Number(faturamentoTotalStr);
 
   const [{ total: indicadorTotalStr, linhas: linhasIndicadorCount }] = await db
     .select({ total: sql<string>`coalesce(sum(${tabela.valor}), 0)`, linhas: sql<string>`count(*)` })
     .from(tabela)
-    .where(eq(tabela.data, d1));
+    .where(unidadeId ? and(filtroJanela, eq(tabela.unidadeId, unidadeId)) : filtroJanela);
   const totalIndicador = Number(indicadorTotalStr);
   const existeRegistroIndicador = Number(linhasIndicadorCount) > 0;
 
@@ -72,7 +93,7 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
   const porMotivoRows = await db
     .select({ motivo: tabela.motivo, total: sql<string>`sum(${tabela.valor})` })
     .from(tabela)
-    .where(eq(tabela.data, d1))
+    .where(unidadeId ? and(filtroJanela, eq(tabela.unidadeId, unidadeId)) : filtroJanela)
     .groupBy(tabela.motivo)
     .orderBy(sql`sum(${tabela.valor}) desc`);
 
@@ -86,7 +107,7 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
         ocorrencias: sql<string>`count(*)`,
       })
       .from(brindes)
-      .where(eq(brindes.data, d1))
+      .where(unidadeId ? and(between(brindes.data, dataInicioJanela, dataFimJanela), eq(brindes.unidadeId, unidadeId)) : between(brindes.data, dataInicioJanela, dataFimJanela))
       .groupBy(brindes.motivo, brindes.motivo2);
 
     submotivosPorMotivo = new Map();
@@ -112,21 +133,21 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
       .select({ codigo: unidades.codigo, total: sql<string>`sum(${tabela.valor})` })
       .from(tabela)
       .innerJoin(unidades, eq(tabela.unidadeId, unidades.id))
-      .where(eq(tabela.data, d1))
+      .where(unidadeId ? and(filtroJanela, eq(tabela.unidadeId, unidadeId)) : filtroJanela)
       .groupBy(unidades.codigo),
     db
       .select({ codigo: unidades.codigo, total: sql<string>`sum(${faturamento.valor})` })
       .from(faturamento)
       .innerJoin(unidades, eq(faturamento.unidadeId, unidades.id))
-      .where(eq(faturamento.data, d1))
+      .where(unidadeId ? and(filtroJanelaFaturamento, eq(faturamento.unidadeId, unidadeId)) : filtroJanelaFaturamento)
       .groupBy(unidades.codigo),
-    // Loja × motivo (mesma janela D-1) — só para saber qual motivo abrir na coluna Plano de
-    // Ação (item 2 da etapa de revisão); não altera valor/percentual/semáforo já calculados.
+    // Loja × motivo (mesma janela) — só para saber qual motivo abrir na coluna Plano de Ação;
+    // não altera valor/percentual/semáforo já calculados.
     db
       .select({ codigo: unidades.codigo, motivo: tabela.motivo, total: sql<string>`sum(${tabela.valor})` })
       .from(tabela)
       .innerJoin(unidades, eq(tabela.unidadeId, unidades.id))
-      .where(eq(tabela.data, d1))
+      .where(unidadeId ? and(filtroJanela, eq(tabela.unidadeId, unidadeId)) : filtroJanela)
       .groupBy(unidades.codigo, tabela.motivo),
   ]);
 
@@ -168,4 +189,26 @@ export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Dat
     porMotivo,
     porFilial,
   };
+}
+
+/** Assinatura original (D-1 sobre uma única data) — inalterada, usada por Visão Geral/Fechamento Semanal-WhatsApp. */
+export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Date = new Date()): Promise<IndicadorData> {
+  const d1 = dataDMenos1(dataReferencia);
+  return buscarIndicadorJanela(fonte, d1, d1, undefined);
+}
+
+/**
+ * Filtro de Loja + Período (item 2 da etapa de revisão) — Indicadores e
+ * Retiradas > Compra Direta. A regra D-1 é preservada aplicando o
+ * deslocamento de 1 dia às DUAS pontas do intervalo escolhido pela
+ * usuária (mesma função `dataDMenos1` já validada, nenhuma data
+ * inventada): período 01/09–30/09 vira janela real 31/08–29/09.
+ */
+export async function buscarIndicadorPeriodo(
+  fonte: FonteIndicador,
+  dataInicio: Date,
+  dataFim: Date,
+  unidade?: CodigoUnidade
+): Promise<IndicadorData> {
+  return buscarIndicadorJanela(fonte, dataDMenos1(dataInicio), dataDMenos1(dataFim), unidade);
 }

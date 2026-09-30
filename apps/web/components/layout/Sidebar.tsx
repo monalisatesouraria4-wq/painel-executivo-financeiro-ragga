@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -38,18 +39,25 @@ export function Sidebar({ mobileAberta, onFechar }: SidebarProps) {
         />
       )}
 
+      {/* Sidebar CLARA com identidade Ragga (correção de identidade visual: a marca é AZUL,
+          não roxa — sidebar escura revertida). Fundo branco/off-white, logo oficial bem
+          visível (public/ragga-leaf.png, asset real fornecido pela usuária — nenhuma logo
+          inventada), menu e destaques em azul da marca. */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-ragga-blue/10 bg-ragga-surface transition-transform duration-200 md:static md:z-auto md:translate-x-0 md:transition-[width] ${
           mobileAberta ? "translate-x-0" : "-translate-x-full"
         } ${recolhida ? "md:w-16" : "md:w-64"}`}
       >
-        <div className="flex items-center justify-between border-b border-ragga-blue/10 px-4 py-4">
-          {!recolhida && (
-            <div>
-              <p className="text-xs font-medium text-ragga-blue">Grupo Londrino / Ragga</p>
-              <p className="text-sm font-semibold text-ragga-blue-dark">Painel Executivo</p>
-            </div>
-          )}
+        <div className="flex items-center justify-between gap-2 border-b border-ragga-blue/10 px-4 py-4">
+          <div className="flex items-center gap-2.5 overflow-hidden">
+            <Image src="/ragga-leaf.png" alt="Ragga" width={34} height={34} className="shrink-0" priority />
+            {!recolhida && (
+              <div className="min-w-0">
+                <p className="truncate text-xs font-medium text-ragga-blue">Grupo Londrino / Ragga</p>
+                <p className="truncate text-sm font-semibold text-ragga-blue-dark">Painel Executivo</p>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setRecolhida((v) => !v)}

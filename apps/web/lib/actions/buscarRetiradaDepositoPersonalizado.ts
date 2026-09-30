@@ -21,17 +21,30 @@ import type { CodigoUnidade } from "@painel/shared";
  */
 export async function buscarRetiradaDepositoPersonalizado(
   inicio: Date,
-  fim: Date
+  fim: Date,
+  unidadeFiltro?: CodigoUnidade
 ): Promise<RetiradaDepositoPersonalizadoData> {
   const conectado = Boolean(process.env.DATABASE_URL);
   if (!conectado) return { conectado, disponivel: false, linhas: [] };
 
   const db = getDb();
+
+  let unidadeId: string | undefined;
+  if (unidadeFiltro) {
+    const [linha] = await db.select({ id: unidades.id }).from(unidades).where(eq(unidades.codigo, unidadeFiltro));
+    unidadeId = linha?.id;
+    if (!unidadeId) return { conectado, disponivel: true, linhas: [] }; // loja desconhecida — nunca inventa dado
+  }
+
   const linhas = await db
     .select({ codigo: unidades.codigo, data: retiradaDeposito.data, valor: retiradaDeposito.valor })
     .from(retiradaDeposito)
     .innerJoin(unidades, eq(retiradaDeposito.unidadeId, unidades.id))
-    .where(and(eq(retiradaDeposito.motivo, "DEPÓSITO"), between(retiradaDeposito.data, inicio, fim)));
+    .where(
+      unidadeId
+        ? and(eq(retiradaDeposito.motivo, "DEPÓSITO"), between(retiradaDeposito.data, inicio, fim), eq(retiradaDeposito.unidadeId, unidadeId))
+        : and(eq(retiradaDeposito.motivo, "DEPÓSITO"), between(retiradaDeposito.data, inicio, fim))
+    );
 
   const porCiclo = new Map<string, { unidade: CodigoUnidade; inicioCiclo: Date; total: number }>();
   for (const linha of linhas) {

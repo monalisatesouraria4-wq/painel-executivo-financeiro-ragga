@@ -6,8 +6,7 @@ import { EstadoVazio } from "@/components/ui/EstadoVazio";
 import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
 import { PlanoAcaoCelula } from "./PlanoAcaoCelula";
 import type { CorSemaforo, FaixaSemaforo } from "@/lib/rules/semaforos";
-import type { IndicadorData, ModoPeriodo } from "@/lib/services/indicadores";
-import { UNIDADES } from "@painel/shared";
+import type { IndicadorData } from "@/lib/services/indicadores";
 
 /** Mesmo rótulo textual já usado em components/ui/IndicadorCard.tsx (Visão Geral) — consistência entre telas. */
 const TEXTO_SEMAFORO: Record<CorSemaforo, string> = {
@@ -39,26 +38,19 @@ function LegendaSemaforo({ faixas, legendaTexto }: { faixas: FaixaSemaforo[]; le
   );
 }
 
-const MODOS_PERIODO: { id: ModoPeriodo; nome: string }[] = [
-  { id: "dia", nome: "Dia" },
-  { id: "semana", nome: "Semana" },
-  { id: "mes", nome: "Mês" },
-  { id: "personalizado", nome: "Personalizado" },
-];
-
 /**
  * Corpo compartilhado de `createIndicatorController`/`render()` do
- * legado (linhas 2898-3134): filtro de período (Dia/Semana/Mês/
- * Personalizado), filtro de loja, KPIs, legenda de semáforo, tabela por
+ * legado (linhas 2898-3134): KPIs, legenda de semáforo, tabela por
  * Motivo (com Submotivo expansível quando a fonte tem) e tabela "Por
  * unidade". Usado tanto por Indicadores (3 fontes, com sub-abas) quanto
  * por Retiradas > Compra Direta (1 fonte, sem sub-abas de fonte) —
  * exatamente como o legado reaproveita a mesma fábrica
- * `createIndicatorController` para as duas telas.
+ * `createIndicatorController` para as duas telas. O filtro de Loja +
+ * Período (item 2 da etapa de revisão) agora vive UMA vez só no
+ * componente pai (`IndicadoresTabs`/`RetiradasTabs`, `FiltroLojaPeriodo`)
+ * e já chega aqui aplicado em `dados` — nenhum filtro duplicado por card.
  */
 export function IndicadorPainel({ dados, dataOcorrencia }: { dados: IndicadorData; dataOcorrencia?: Date | null }) {
-  const [modoPeriodo, setModoPeriodo] = useState<ModoPeriodo>("dia");
-  const [lojaFiltro, setLojaFiltro] = useState<string>("TODAS");
   const [motivosExpandidos, setMotivosExpandidos] = useState<Set<string>>(new Set());
 
   const { config } = dados;
@@ -74,45 +66,13 @@ export function IndicadorPainel({ dados, dataOcorrencia }: { dados: IndicadorDat
 
   return (
     <div className="space-y-4">
-      {/* Filtros: período + loja */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap gap-1 rounded-md border border-ragga-blue/15 p-1">
-          {MODOS_PERIODO.map((modo) => (
-            <button
-              key={modo.id}
-              type="button"
-              onClick={() => setModoPeriodo(modo.id)}
-              className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-                modoPeriodo === modo.id ? "bg-ragga-blue text-white" : "text-foreground/60 hover:bg-ragga-bg"
-              }`}
-            >
-              {modo.nome}
-            </button>
-          ))}
-        </div>
-
-        <select
-          value={lojaFiltro}
-          onChange={(e) => setLojaFiltro(e.target.value)}
-          className="rounded-md border border-ragga-blue/15 bg-ragga-surface px-3 py-1.5 text-sm text-foreground"
-        >
-          <option value="TODAS">Todas as lojas</option>
-          {UNIDADES.map((u) => (
-            <option key={u} value={u}>
-              {u}
-            </option>
-          ))}
-        </select>
-      </div>
-
       <LegendaSemaforo faixas={config.faixas} legendaTexto={config.semaforoLegend} />
 
       {!dados.conectado && (
         <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
           Banco de dados ainda não conectado (<code>DATABASE_URL</code> não definida). Os
           indicadores abaixo ficam pendentes até a carga de dados reais ser autorizada —
-          nenhum valor foi inventado. Os filtros acima são controles funcionais de UI; a busca
-          reativa por período/loja será ligada quando o backend estiver conectado.
+          nenhum valor foi inventado.
         </div>
       )}
 

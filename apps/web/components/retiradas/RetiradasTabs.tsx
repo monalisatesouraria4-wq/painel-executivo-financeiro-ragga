@@ -1,20 +1,22 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import type { CodigoUnidade } from "@painel/shared";
 import { RetiradaDepositoTab } from "./RetiradaDepositoTab";
 import { IndicadorPainel } from "@/components/indicadores/IndicadorPainel";
-import { FiltroDataReferencia, paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
+import { FiltroLojaPeriodo } from "@/components/ui/FiltroLojaPeriodo";
+import { paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import { dataDMenos1 } from "@/lib/rules/datas";
-import type { RetiradaDepositoDiaData } from "@/lib/services/retiradaDeposito";
 import type { IndicadorData } from "@/lib/services/indicadores";
-import { buscarRetiradaDepositoDiaPorData } from "@/lib/actions/buscarRetiradaDepositoDiaPorData";
-import { buscarIndicadorPorData } from "@/lib/actions/buscarIndicadorPorData";
+import { buscarIndicadorPeriodo } from "@/lib/actions/buscarIndicadorPeriodo";
 
 /**
  * Sub-abas de Retiradas — mesmos rótulos exatos do sidebar do legado
  * (linhas 631-632): "Retirada para Depósito" e "Retirada Compra Direta".
- * Filtro de Data de Referência compartilhado entre as duas sub-abas —
- * cada uma continua aplicando sua própria regra (D-1) sobre a mesma data.
+ * Filtro de Loja + Período (item 2 da etapa de revisão) compartilhado
+ * entre as duas sub-abas — cada uma continua aplicando sua própria regra
+ * (D-1 para Compra Direta; ciclo de depósito, inalterado, para Retirada
+ * p/ Depósito) sobre a mesma referência.
  */
 const SUBABAS = [
   { id: "deposito", nome: "Retirada para Depósito" },
@@ -24,37 +26,63 @@ const SUBABAS = [
 type SubAba = (typeof SUBABAS)[number]["id"];
 
 export function RetiradasTabs({
-  depositoDia,
   compraDireta,
   dataInicial,
 }: {
-  depositoDia: RetiradaDepositoDiaData;
   compraDireta: IndicadorData;
   dataInicial: Date;
 }) {
   const [subAtiva, setSubAtiva] = useState<SubAba>("deposito");
-  const [dataSelecionada, setDataSelecionada] = useState(() => paraInputDate(dataInicial));
-  const [dadosDeposito, setDadosDeposito] = useState(depositoDia);
+  const [unidade, setUnidade] = useState<string>("TODAS");
+  const [dataInicio, setDataInicio] = useState(() => paraInputDate(dataInicial));
+  const [dataFim, setDataFim] = useState(() => paraInputDate(dataInicial));
   const [dadosCompraDireta, setDadosCompraDireta] = useState(compraDireta);
   const [pendente, iniciarTransicao] = useTransition();
+  // Guarda de corrida (mesmo bug real encontrado em IndicadoresTabs.tsx):
+  // início e fim disparam chamadas separadas — sem isso, a resposta de uma
+  // janela já desatualizada podia chegar depois e sobrescrever o resultado
+  // correto da chamada mais recente.
+  const ultimaRequisicao = useRef(0);
 
-  function alterarData(novaData: string) {
-    setDataSelecionada(novaData);
+  function recarregarCompraDireta(novaUnidade: string, novoInicio: string, novoFim: string) {
+    const idRequisicao = ++ultimaRequisicao.current;
     iniciarTransicao(async () => {
-      const data = dataDoInput(novaData);
-      const [deposito, compra] = await Promise.all([
-        buscarRetiradaDepositoDiaPorData(data),
-        buscarIndicadorPorData("compraDireta", data),
-      ]);
-      setDadosDeposito(deposito);
-      setDadosCompraDireta(compra);
+      const unidadeFiltro = novaUnidade !== "TODAS" ? (novaUnidade as CodigoUnidade) : undefined;
+      const resultado = await buscarIndicadorPeriodo("compraDireta", dataDoInput(novoInicio), dataDoInput(novoFim), unidadeFiltro);
+      if (idRequisicao !== ultimaRequisicao.current) return; // resposta de uma requisição já superada — descartada
+      setDadosCompraDireta(resultado);
     });
   }
+
+  function alterarUnidade(nova: string) {
+    setUnidade(nova);
+    recarregarCompraDireta(nova, dataInicio, dataFim);
+  }
+
+  function alterarInicio(nova: string) {
+    setDataInicio(nova);
+    recarregarCompraDireta(unidade, nova, dataFim);
+  }
+
+  function alterarFim(nova: string) {
+    setDataFim(nova);
+    recarregarCompraDireta(unidade, dataInicio, nova);
+  }
+
+  const unidadeFiltro = unidade !== "TODAS" ? (unidade as CodigoUnidade) : undefined;
 
   return (
     <div>
       <div className="border-b border-ragga-blue/10 px-6 py-3">
-        <FiltroDataReferencia valor={dataSelecionada} aoAlterar={alterarData} carregando={pendente} />
+        <FiltroLojaPeriodo
+          unidade={unidade}
+          aoAlterarUnidade={alterarUnidade}
+          dataInicio={dataInicio}
+          dataFim={dataFim}
+          aoAlterarInicio={alterarInicio}
+          aoAlterarFim={alterarFim}
+          carregando={pendente}
+        />
       </div>
 
       <div className="flex flex-wrap gap-1 border-b border-ragga-blue/10 px-6">
@@ -75,9 +103,11 @@ export function RetiradasTabs({
       </div>
 
       <div className="px-6 py-6">
-        {subAtiva === "deposito" && <RetiradaDepositoTab dadosDia={dadosDeposito} />}
+        {subAtiva === "deposito" && (
+          <RetiradaDepositoTab periodoInicio={dataDoInput(dataInicio)} periodoFim={dataDoInput(dataFim)} unidade={unidadeFiltro} />
+        )}
         {subAtiva === "compradireta" && (
-          <IndicadorPainel dados={dadosCompraDireta} dataOcorrencia={dataDMenos1(dataDoInput(dataSelecionada))} />
+          <IndicadorPainel dados={dadosCompraDireta} dataOcorrencia={dataDMenos1(dataDoInput(dataFim))} />
         )}
       </div>
     </div>
