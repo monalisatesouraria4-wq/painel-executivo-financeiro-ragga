@@ -176,6 +176,7 @@ function IndicadorVisaoGeral({
   indisponivelTexto,
   insight,
   modoPeriodo,
+  href,
 }: {
   titulo: string;
   icone: NomeIcone;
@@ -183,10 +184,14 @@ function IndicadorVisaoGeral({
   indisponivelTexto: string;
   insight?: string;
   modoPeriodo?: boolean;
+  /** Abre o ranking por loja deste indicador (central de indicadores). */
+  href?: string;
 }) {
   const larguraBarra = dados.disponivel && dados.percentualFaturamento !== undefined ? Math.min(100, dados.percentualFaturamento * 10) : 0;
-  return (
-    <div className="group relative overflow-hidden rounded-xl border border-ragga-blue/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md">
+  const classesCard =
+    "group relative block overflow-hidden rounded-xl border border-ragga-blue/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ragga-blue";
+  const corpo = (
+    <>
       <div className="flex items-start justify-between">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ragga-blue-dark text-white">
           <Icone nome={icone} className="h-4 w-4" />
@@ -199,7 +204,7 @@ function IndicadorVisaoGeral({
       </p>
       {dados.disponivel ? (
         <>
-          <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
+          <p className="mt-1 text-[2.25rem] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
           <div className="mt-2 flex items-center justify-between text-xs text-foreground/50">
             <span>{dados.percentualFaturamento !== undefined && `${formatadorPercentual.format(dados.percentualFaturamento)}% do faturamento`}</span>
             {/* No modo período o `dataRegistro` é só o fim do intervalo — mostrar aqui
@@ -219,7 +224,15 @@ function IndicadorVisaoGeral({
           <p className="mt-2 text-xs text-foreground/45">{indisponivelTexto}</p>
         </>
       )}
-    </div>
+      {href && <p className="mt-2 text-xs font-medium text-ragga-blue opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">Ver ranking por loja →</p>}
+    </>
+  );
+  return href ? (
+    <Link href={href} className={classesCard}>
+      {corpo}
+    </Link>
+  ) : (
+    <div className={classesCard}>{corpo}</div>
   );
 }
 
@@ -367,6 +380,12 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
     { titulo: "Retirada Compra Direta", dados: cardsExibidos.retiradaCompraDireta },
   ].filter((i) => i.dados.disponivel && (i.dados.semaforo === "vermelho" || i.dados.semaforo === "amarelo"));
 
+  // Link para a central de indicadores: Indicadores aplica D-1 sobre a data de referência,
+  // então enviamos o dia seguinte para abrir exatamente o mesmo dia mostrado no card.
+  const diaSeguinte = (valor: string) => paraInputDate(new Date(dataDoInput(valor).getTime() + 86_400_000));
+  const hrefIndicador = (fonte: string) =>
+    `/indicadores?fonte=${fonte}&inicio=${diaSeguinte(dataInicioSel)}&fim=${diaSeguinte(dataFimSel)}${lojaFiltro !== "TODAS" ? `&loja=${encodeURIComponent(lojaFiltro)}` : ""}`;
+
   const textoIndisponivel = dados.conectado ? "Sem dados disponíveis" : "Sem dados para esta referência";
   const textoPeriodo = dados.modoPeriodo
     ? `${formatadorData.format(dados.dataInicio)} até ${formatadorData.format(dados.dataFim)}`
@@ -379,9 +398,9 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
         <span className="hidden w-1 shrink-0 rounded-full bg-gradient-to-b from-ragga-blue to-ragga-blue-dark sm:block" />
         <div className="flex flex-1 flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Image src="/ragga-leaf.png" alt="Ragga" width={40} height={40} className="shrink-0" priority />
+            <Image src="/ragga-gestao-icone.svg" alt="Ragga Gestão" width={40} height={40} className="shrink-0" priority />
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-ragga-blue/55">Painel executivo</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-ragga-blue/55">Central de caixa</p>
               <h1 className="mt-0.5 text-[1.75rem] font-extrabold leading-tight text-ragga-blue-dark">Visão Geral</h1>
               <p className="mt-0.5 text-sm capitalize text-foreground/45">
                 {dados.modoPeriodo ? `Período: ${textoPeriodo}` : formatadorDataExtenso.format(dados.dataFim)}
@@ -575,6 +594,7 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
           <IndicadorVisaoGeral
             titulo="Brindes"
             icone="brinde"
+            href={hrefIndicador("brindes")}
             dados={cardsExibidos.brindes}
             indisponivelTexto={textoIndisponivel}
             modoPeriodo={dados.modoPeriodo}
@@ -583,14 +603,16 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
           <IndicadorVisaoGeral
             titulo="Cancelamento Salão"
             icone="cancelSalao"
+            href={hrefIndicador("cancelamentoSalao")}
             dados={cardsExibidos.cancelamentoSalao}
             indisponivelTexto={textoIndisponivel}
             modoPeriodo={dados.modoPeriodo}
             insight="Cancelamentos representam vendas canceladas e devem ser analisados conforme o motivo da ocorrência."
           />
           <IndicadorVisaoGeral
-            titulo="Cancelamento Delivery"
+            titulo="Cancelamento Delivery (vs iFood)"
             icone="cancelDelivery"
+            href={hrefIndicador("cancelamentoDelivery")}
             dados={cardsExibidos.cancelamentoDelivery}
             indisponivelTexto={textoIndisponivel}
             modoPeriodo={dados.modoPeriodo}
