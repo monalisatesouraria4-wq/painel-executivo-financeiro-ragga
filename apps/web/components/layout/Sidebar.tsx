@@ -49,13 +49,15 @@ export function Sidebar({ mobileAberta, onFechar }: SidebarProps) {
         } ${recolhida ? "md:w-16" : "md:w-64"}`}
       >
         <div className="flex items-center justify-between gap-2 border-b border-ragga-blue/10 px-4 py-4">
-          <div className="flex items-center gap-2.5 overflow-hidden">
-            <Image src="/ragga-leaf.png" alt="Ragga" width={34} height={34} className="shrink-0" priority />
-            {!recolhida && (
-              <div className="min-w-0">
-                <p className="truncate text-xs font-medium text-ragga-blue">Grupo Londrino / Ragga</p>
-                <p className="truncate text-sm font-semibold text-ragga-blue-dark">Painel Executivo</p>
-              </div>
+          <div className="flex min-w-0 flex-col gap-1 overflow-hidden">
+            {/* Logo oficial do manual da marca (Ragga Gestão, RGB/SVG). */}
+            {recolhida ? (
+              <Image src="/ragga-gestao-icone.svg" alt="Ragga Gestão" width={30} height={30} className="shrink-0" priority />
+            ) : (
+              <>
+                <Image src="/ragga-gestao-horizontal.svg" alt="Ragga Gestão" width={150} height={27} className="shrink-0" priority />
+                <p className="truncate text-[11px] font-medium uppercase tracking-wide text-foreground/50">Central de Caixa · Grupo Londrino</p>
+              </>
             )}
           </div>
           <button

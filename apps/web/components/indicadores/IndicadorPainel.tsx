@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { EstadoVazio } from "@/components/ui/EstadoVazio";
 import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
@@ -54,6 +54,17 @@ export function IndicadorPainel({ dados, dataOcorrencia }: { dados: IndicadorDat
   const [motivosExpandidos, setMotivosExpandidos] = useState<Set<string>>(new Set());
 
   const { config } = dados;
+  const [ordem, setOrdem] = useState<"pct" | "valor" | "loja">("pct");
+  const [somenteAcao, setSomenteAcao] = useState(false);
+
+  const lojasEmAcao = dados.porFilial.filter((l) => l.semaforo === "vermelho" || l.semaforo === "amarelo").length;
+  // Ranking: por padrão do pior para o melhor (% do faturamento); a ordem canônica das lojas continua disponível.
+  const ranking = useMemo(() => {
+    const base = somenteAcao ? dados.porFilial.filter((l) => l.semaforo === "vermelho" || l.semaforo === "amarelo") : [...dados.porFilial];
+    if (ordem === "pct") base.sort((a, b) => b.percentualFaturamento - a.percentualFaturamento);
+    else if (ordem === "valor") base.sort((a, b) => b.valor - a.valor);
+    return base;
+  }, [dados.porFilial, ordem, somenteAcao]);
 
   function alternarMotivo(motivo: string) {
     setMotivosExpandidos((atual) => {
@@ -162,13 +173,45 @@ export function IndicadorPainel({ dados, dataOcorrencia }: { dados: IndicadorDat
         </Card>
       </section>
 
-      {/* Tabela Por unidade */}
+      {/* Ranking por loja */}
       <section>
-        <h3 className="mb-2 text-sm font-semibold text-ragga-blue-dark">Por unidade</h3>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-ragga-blue-dark">Ranking por loja · {config.label}</h3>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-foreground/50">Ordenar:</span>
+            {([
+              ["pct", "% do faturamento"],
+              ["valor", "Valor (R$)"],
+              ["loja", "Ordem das lojas"],
+            ] as const).map(([chave, rotulo]) => (
+              <button
+                key={chave}
+                type="button"
+                onClick={() => setOrdem(chave)}
+                className={`rounded-full border px-2.5 py-1 font-medium transition-colors ${
+                  ordem === chave ? "border-ragga-blue bg-ragga-blue text-white" : "border-ragga-blue/20 text-ragga-blue-dark hover:bg-ragga-bg"
+                }`}
+              >
+                {rotulo}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setSomenteAcao((v) => !v)}
+              aria-pressed={somenteAcao}
+              className={`rounded-full border px-2.5 py-1 font-medium transition-colors ${
+                somenteAcao ? "border-semaforo-vermelho bg-semaforo-vermelho text-white" : "border-semaforo-vermelho/40 text-semaforo-vermelho hover:bg-semaforo-vermelho/10"
+              }`}
+            >
+              Só com plano de ação ({lojasEmAcao})
+            </button>
+          </div>
+        </div>
         <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-ragga-blue/10 text-left text-xs uppercase tracking-wide text-foreground/50">
+                <th className="px-4 py-2">#</th>
                 <th className="px-4 py-2">Filial</th>
                 <th className="px-4 py-2">Valor</th>
                 <th className="px-4 py-2">Faturamento</th>
@@ -178,35 +221,44 @@ export function IndicadorPainel({ dados, dataOcorrencia }: { dados: IndicadorDat
               </tr>
             </thead>
             <tbody>
-              {dados.porFilial.length === 0 ? (
-                <EstadoVazio colSpan={6} />
+              {ranking.length === 0 ? (
+                <EstadoVazio colSpan={7} />
               ) : (
-                dados.porFilial.map((linha) => (
-                  <tr key={linha.unidade} className="border-b border-ragga-blue/5 last:border-0">
-                    <td className="px-4 py-2 font-medium text-ragga-blue-dark">{linha.unidade}</td>
-                    <td className="px-4 py-2">{formatadorMoeda.format(linha.valor)}</td>
-                    <td className="px-4 py-2">{formatadorMoeda.format(linha.faturamento)}</td>
-                    <td className="px-4 py-2">{formatadorPercentual.format(linha.percentualFaturamento)}%</td>
-                    <td className="px-4 py-2">
-                      <SemaforoBadge cor={linha.semaforo} texto={TEXTO_SEMAFORO[linha.semaforo]} />
-                    </td>
-                    <td className="px-4 py-2">
-                      <PlanoAcaoCelula
-                        indicador={config.label}
-                        unidade={linha.unidade}
-                        motivo={linha.motivoPrincipal}
-                        valor={linha.valor}
-                        percentualFaturamento={linha.percentualFaturamento}
-                        dataOcorrencia={dataOcorrencia ?? null}
-                      />
-                    </td>
-                  </tr>
-                ))
+                ranking.map((linha, i) => {
+                  const precisaAcao = linha.semaforo === "vermelho" || linha.semaforo === "amarelo";
+                  return (
+                    <tr
+                      key={linha.unidade}
+                      className={`border-b border-ragga-blue/5 last:border-0 ${linha.semaforo === "vermelho" ? "bg-semaforo-vermelho/[0.04]" : ""}`}
+                    >
+                      <td className="px-4 py-2 text-xs font-bold text-foreground/40">{ordem === "loja" ? "–" : i + 1}</td>
+                      <td className="px-4 py-2 font-medium text-ragga-blue-dark">{linha.unidade}</td>
+                      <td className="px-4 py-2 font-semibold">{formatadorMoeda.format(linha.valor)}</td>
+                      <td className="px-4 py-2 text-foreground/60">{formatadorMoeda.format(linha.faturamento)}</td>
+                      <td className="px-4 py-2">{formatadorPercentual.format(linha.percentualFaturamento)}%</td>
+                      <td className="px-4 py-2">
+                        <SemaforoBadge cor={linha.semaforo} texto={TEXTO_SEMAFORO[linha.semaforo]} />
+                      </td>
+                      <td className="px-4 py-2">
+                        <PlanoAcaoCelula
+                          indicador={config.label}
+                          unidade={linha.unidade}
+                          motivo={linha.motivoPrincipal}
+                          valor={linha.valor}
+                          percentualFaturamento={linha.percentualFaturamento}
+                          dataOcorrencia={dataOcorrencia ?? null}
+                          destaque={precisaAcao}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </Card>
       </section>
+
     </div>
   );
 }
