@@ -1,7 +1,6 @@
 import { UNIDADES, type CodigoUnidade } from "@painel/shared";
 import { Header } from "@/components/layout/Header";
 import { IndicadoresTabs } from "@/components/indicadores/IndicadoresTabs";
-import { dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import type { FonteIndicador, IndicadorData } from "@/lib/services/indicadores";
 import { buscarIndicador, buscarIndicadorPeriodo } from "@/lib/services/indicadores.server";
 
@@ -15,6 +14,7 @@ export const dynamic = "force-dynamic";
 
 const FONTES: FonteIndicador[] = ["brindes", "cancelamentoSalao", "cancelamentoDelivery"];
 const DATA_VALIDA = /^\d{4}-\d{2}-\d{2}$/;
+const dataDoInput = (valor: string) => new Date(`${valor}T00:00:00.000Z`);
 
 export default async function IndicadoresPage({
   searchParams,

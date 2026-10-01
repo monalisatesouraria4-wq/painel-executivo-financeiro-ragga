@@ -6,6 +6,9 @@ import Link from "next/link";
 import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
 import { paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import { HistoricoMensalExpandido } from "./HistoricoMensalExpandido";
+import { DesempenhoCaixa } from "./DesempenhoCaixa";
+import type { DesempenhoCaixaData, IndicadorDesempenhoId } from "@/lib/services/desempenhoCaixa";
+import { buscarDesempenhoCaixa } from "@/lib/actions/buscarDesempenhoCaixa";
 import { UNIDADES } from "@painel/shared";
 import type { CorSemaforo } from "@/lib/rules/semaforos";
 import type { VisaoGeralData, IndicadorComSemaforo, IndicadorSimples } from "@/lib/services/visaoGeral";
@@ -204,7 +207,7 @@ function IndicadorVisaoGeral({
       </p>
       {dados.disponivel ? (
         <>
-          <p className="mt-1 text-[2.25rem] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
+          <p className="mt-1 text-[clamp(1.5rem,2.4vw,2.25rem)] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
           <div className="mt-2 flex items-center justify-between text-xs text-foreground/50">
             <span>{dados.percentualFaturamento !== undefined && `${formatadorPercentual.format(dados.percentualFaturamento)}% do faturamento`}</span>
             {/* No modo período o `dataRegistro` é só o fim do intervalo — mostrar aqui
@@ -312,13 +315,24 @@ function CelulaIndicadorLoja({ indicador }: { indicador: IndicadorComSemaforo })
  * são versões locais, só usadas nesta tela, para não afetar o
  * `IndicadorCard` compartilhado por Indicadores/Retiradas.
  */
-export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: VisaoGeralData; dataInicial: Date }) {
+export function VisaoGeralView({
+  dadosIniciais,
+  dataInicial,
+  dataFimInicial,
+  desempenhoInicial,
+}: {
+  dadosIniciais: VisaoGeralData;
+  dataInicial: Date;
+  dataFimInicial?: Date;
+  desempenhoInicial: DesempenhoCaixaData | null;
+}) {
   const [dados, setDados] = useState(dadosIniciais);
+  const [desempenho, setDesempenho] = useState(desempenhoInicial);
   // Filtro de Período (item 2 desta etapa): "data única" é só o caso `dataInicioSel ===
   // dataFimSel` — mesmo padrão inicial de sempre (as duas começam na mesma data), extensão
   // da lógica existente, não um filtro paralelo.
   const [dataInicioSel, setDataInicioSel] = useState(() => paraInputDate(dataInicial));
-  const [dataFimSel, setDataFimSel] = useState(() => paraInputDate(dataInicial));
+  const [dataFimSel, setDataFimSel] = useState(() => paraInputDate(dataFimInicial ?? dataInicial));
   const [pendente, iniciarTransicao] = useTransition();
   const [lojasExpandidas, setLojasExpandidas] = useState<Set<string>>(new Set());
   const [lojaFiltro, setLojaFiltro] = useState<string>("TODAS");
@@ -336,8 +350,12 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
     setDataInicioSel(novoInicio);
     setDataFimSel(novoFim);
     iniciarTransicao(async () => {
-      const resultado = await buscarVisaoGeralPorPeriodo(dataDoInput(novoInicio), dataDoInput(novoFim));
+      const [resultado, resultadoDesempenho] = await Promise.all([
+        buscarVisaoGeralPorPeriodo(dataDoInput(novoInicio), dataDoInput(novoFim)),
+        buscarDesempenhoCaixa(dataDoInput(novoInicio), dataDoInput(novoFim)),
+      ]);
       setDados(resultado);
+      setDesempenho(resultadoDesempenho);
     });
   }
 
@@ -373,18 +391,18 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
 
   const detalhamentoExibido = lojaFiltro === "TODAS" ? dados.detalhamentoPorLoja : linhaLojaFiltro ? [linhaLojaFiltro] : [];
 
-  const indicadoresComAlerta = [
-    { titulo: "Brindes", dados: cardsExibidos.brindes },
-    { titulo: "Cancelamento Salão", dados: cardsExibidos.cancelamentoSalao },
-    { titulo: "Cancelamento Delivery", dados: cardsExibidos.cancelamentoDelivery },
-    { titulo: "Retirada Compra Direta", dados: cardsExibidos.retiradaCompraDireta },
-  ].filter((i) => i.dados.disponivel && (i.dados.semaforo === "vermelho" || i.dados.semaforo === "amarelo"));
-
   // Link para a central de indicadores: Indicadores aplica D-1 sobre a data de referência,
   // então enviamos o dia seguinte para abrir exatamente o mesmo dia mostrado no card.
   const diaSeguinte = (valor: string) => paraInputDate(new Date(dataDoInput(valor).getTime() + 86_400_000));
   const hrefIndicador = (fonte: string) =>
     `/indicadores?fonte=${fonte}&inicio=${diaSeguinte(dataInicioSel)}&fim=${diaSeguinte(dataFimSel)}${lojaFiltro !== "TODAS" ? `&loja=${encodeURIComponent(lojaFiltro)}` : ""}`;
+
+  const hrefPlanoAcao = (id: IndicadorDesempenhoId, loja?: string): string | null => {
+    if (id === "consumoFuncionarios") return null;
+    if (id === "compraDireta") return "/retiradas";
+    const base = hrefIndicador(id === "brindes" ? "brindes" : id);
+    return loja ? `${base}&loja=${encodeURIComponent(loja)}` : base;
+  };
 
   const textoIndisponivel = dados.conectado ? "Sem dados disponíveis" : "Sem dados para esta referência";
   const textoPeriodo = dados.modoPeriodo
@@ -467,10 +485,19 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
         </div>
       )}
 
+      <DesempenhoCaixa
+        dados={desempenho}
+        carregando={pendente}
+        loja={lojaFiltro}
+        conferencia={dados.conferencia}
+        hrefIndicador={hrefPlanoAcao}
+        hrefConferencia="/controles-caixa"
+      />
+
       {/* KPI PRINCIPAL — Faturamento (item 6): largura total, gradiente da identidade,
           elemento gráfico abstrato discreto (linhas diagonais em baixa opacidade), sem
           exagero. Nenhum dado/cálculo novo, só apresentação. */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-ragga-blue via-ragga-blue to-ragga-blue-dark p-6 text-white shadow-[0_8px_24px_-8px_rgba(31,53,112,0.45)] sm:p-9">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-ragga-blue via-ragga-blue to-ragga-blue-dark px-5 py-4 text-white shadow-[0_8px_24px_-8px_rgba(31,53,112,0.45)]">
         <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-[0.07]" preserveAspectRatio="none" aria-hidden="true">
           <defs>
             <pattern id="vg-linhas" width="34" height="34" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
@@ -499,7 +526,7 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
 
         {cardsExibidos.faturamento.disponivel ? (
           <>
-            <p className="relative mt-4 text-[2.75rem] font-extrabold leading-none tracking-tight sm:text-6xl">
+            <p className="relative mt-2 text-2xl font-extrabold leading-none tracking-tight sm:text-3xl">
               {formatadorMoeda.format(cardsExibidos.faturamento.valor ?? 0)}
             </p>
             {/* "vs. dia anterior": só no modo "data única" e para o consolidado de rede — no
@@ -522,40 +549,17 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
           </>
         ) : (
           <>
-            <p className="relative mt-4 text-[2.75rem] font-extrabold leading-none text-white/35 sm:text-6xl">—</p>
+            <p className="relative mt-2 text-2xl font-extrabold leading-none text-white/35 sm:text-3xl">—</p>
             <p className="relative mt-2 text-xs text-white/70">{textoIndisponivel}</p>
           </>
         )}
       </div>
 
-      {/* ALERTAS — painel de atenção gerencial (item 7). */}
-      {indicadoresComAlerta.length > 0 && (
-        <Secao titulo="Alertas">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {indicadoresComAlerta.map((item) => {
-              const critico = item.dados.semaforo === "vermelho";
-              return (
-                <div
-                  key={item.titulo}
-                  className={`flex items-center gap-3 rounded-lg border-l-4 bg-white px-4 py-3 text-sm shadow-sm ${
-                    critico ? "border-l-semaforo-vermelho" : "border-l-semaforo-amarelo"
-                  }`}
-                >
-                  <span className={critico ? "text-semaforo-vermelho" : "text-semaforo-amarelo"}>
-                    <Icone nome="alerta" className="h-4 w-4" />
-                  </span>
-                  <span className="flex-1 font-medium text-ragga-blue-dark">{item.titulo}</span>
-                  <SemaforoBadge
-                    cor={item.dados.semaforo ?? "amarelo"}
-                    texto={`${formatadorPercentual.format(item.dados.percentualFaturamento ?? 0)}%`}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </Secao>
-      )}
-
+      <details className="group">
+        <summary className="cursor-pointer select-none rounded-xl border border-ragga-blue/10 bg-white px-4 py-3 text-[13px] font-bold uppercase tracking-wide text-ragga-blue-dark">
+          Formas de pagamento <span className="font-normal normal-case tracking-normal text-foreground/50">(clique para ver a composição)</span>
+        </summary>
+        <div className="mt-3">
       {/* FORMAS DE PAGAMENTO — composição financeira (item 8). */}
       <Secao
         titulo="Formas de Pagamento"
@@ -588,38 +592,8 @@ export function VisaoGeralView({ dadosIniciais, dataInicial }: { dadosIniciais: 
         )}
       </Secao>
 
-      {/* INDICADORES (item 9). */}
-      <Secao titulo="Indicadores">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <IndicadorVisaoGeral
-            titulo="Brindes"
-            icone="brinde"
-            href={hrefIndicador("brindes")}
-            dados={cardsExibidos.brindes}
-            indisponivelTexto={textoIndisponivel}
-            modoPeriodo={dados.modoPeriodo}
-            insight="Brindes representam concessões/descontos registrados nas vendas — não é automaticamente saída de dinheiro do caixa."
-          />
-          <IndicadorVisaoGeral
-            titulo="Cancelamento Salão"
-            icone="cancelSalao"
-            href={hrefIndicador("cancelamentoSalao")}
-            dados={cardsExibidos.cancelamentoSalao}
-            indisponivelTexto={textoIndisponivel}
-            modoPeriodo={dados.modoPeriodo}
-            insight="Cancelamentos representam vendas canceladas e devem ser analisados conforme o motivo da ocorrência."
-          />
-          <IndicadorVisaoGeral
-            titulo="Cancelamento Delivery (vs iFood)"
-            icone="cancelDelivery"
-            href={hrefIndicador("cancelamentoDelivery")}
-            dados={cardsExibidos.cancelamentoDelivery}
-            indisponivelTexto={textoIndisponivel}
-            modoPeriodo={dados.modoPeriodo}
-            insight="Cancelamentos representam vendas canceladas e devem ser analisados conforme o motivo da ocorrência."
-          />
         </div>
-      </Secao>
+      </details>
 
       {/* RETIRADAS (item 10) — regra do R$ 0,00 para Retirada Depósito preservada (não
           alterada nesta etapa, só o visual do card). */}
