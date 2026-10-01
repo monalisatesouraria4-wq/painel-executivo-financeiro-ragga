@@ -53,7 +53,7 @@ export function DeliveryVsIfood({ delivery, ifood }: { delivery: IndicadorData; 
             <p className="text-xs font-semibold uppercase tracking-wide text-foreground/50">Delivery</p>
             {delivery.disponivel && delivery.semaforo && <SemaforoBadge cor={delivery.semaforo} texto={TEXTO_SEMAFORO[delivery.semaforo]} />}
           </div>
-          <p className={`mt-2 text-[2.25rem] font-extrabold leading-none ${valorDelivery !== null ? "text-ragga-blue-dark" : "text-foreground/20"}`}>
+          <p className={`mt-2 text-[clamp(1.5rem,2.4vw,2.25rem)] font-extrabold leading-none ${valorDelivery !== null ? "text-ragga-blue-dark" : "text-foreground/20"}`}>
             {valorDelivery !== null ? formatadorMoeda.format(valorDelivery) : "—"}
           </p>
           <p className="mt-2 text-sm text-foreground/60">
@@ -66,7 +66,7 @@ export function DeliveryVsIfood({ delivery, ifood }: { delivery: IndicadorData; 
             <p className="text-xs font-semibold uppercase tracking-wide text-foreground/50">iFood</p>
             {ifood && <SemaforoBadge cor={ifood.semaforo} texto={TEXTO_SEMAFORO[ifood.semaforo]} />}
           </div>
-          <p className={`mt-2 text-[2.25rem] font-extrabold leading-none ${ifood ? "text-ragga-blue-dark" : "text-foreground/20"}`}>
+          <p className={`mt-2 text-[clamp(1.5rem,2.4vw,2.25rem)] font-extrabold leading-none ${ifood ? "text-ragga-blue-dark" : "text-foreground/20"}`}>
             {ifood ? formatadorMoeda.format(ifood.valor) : "—"}
           </p>
           <p className="mt-2 text-sm text-foreground/60">

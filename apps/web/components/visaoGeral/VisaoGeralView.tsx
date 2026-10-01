@@ -204,7 +204,7 @@ function IndicadorVisaoGeral({
       </p>
       {dados.disponivel ? (
         <>
-          <p className="mt-1 text-[2.25rem] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
+          <p className="mt-1 text-[clamp(1.5rem,2.4vw,2.25rem)] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
           <div className="mt-2 flex items-center justify-between text-xs text-foreground/50">
             <span>{dados.percentualFaturamento !== undefined && `${formatadorPercentual.format(dados.percentualFaturamento)}% do faturamento`}</span>
             {/* No modo período o `dataRegistro` é só o fim do intervalo — mostrar aqui

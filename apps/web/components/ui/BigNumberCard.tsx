@@ -57,7 +57,7 @@ export function BigNumberCard({ titulo, valor, detalhe, semaforo, rodape, textoS
         {disponivel && semaforo && <SemaforoBadge cor={semaforo} texto={TEXTO_SEMAFORO[semaforo]} />}
       </div>
       {disponivel ? (
-        <p className="mt-2 pl-1 text-[2.25rem] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{valor}</p>
+        <p className="mt-2 pl-1 text-[clamp(1.5rem,2.4vw,2.25rem)] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{valor}</p>
       ) : (
         <p className="mt-2 pl-1 text-[2.25rem] font-extrabold leading-none text-foreground/20">—</p>
       )}
