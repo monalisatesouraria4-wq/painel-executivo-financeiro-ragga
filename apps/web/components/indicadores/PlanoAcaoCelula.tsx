@@ -25,6 +25,7 @@ export function PlanoAcaoCelula({
   valor,
   percentualFaturamento,
   dataOcorrencia,
+  destaque = false,
 }: {
   indicador: string;
   unidade: CodigoUnidade;
@@ -32,6 +33,8 @@ export function PlanoAcaoCelula({
   valor: number;
   percentualFaturamento: number;
   dataOcorrencia: Date | null;
+  /** Loja em Atenção/Crítico: botão vira chamada para tratar. */
+  destaque?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
   const [formAberto, setFormAberto] = useState(false);
@@ -84,9 +87,11 @@ export function PlanoAcaoCelula({
       <button
         type="button"
         onClick={() => setAberto(true)}
-        className="whitespace-nowrap text-xs font-medium text-ragga-blue-dark hover:underline"
+        className={`whitespace-nowrap text-xs font-medium ${
+          destaque ? "rounded bg-ragga-blue px-2.5 py-1 text-white hover:bg-ragga-blue-dark" : "text-ragga-blue-dark hover:underline"
+        }`}
       >
-        Ver orientação →
+        {destaque ? "Tratar →" : "Ver orientação →"}
       </button>
 
       {aberto && (

@@ -47,3 +47,29 @@ export interface AberturaFechamentoData {
   diferencaFinanceira: number;
   linhas: CaixaAberturaFechamentoLinha[];
 }
+
+/**
+ * Filtro de STATUS do painel de Fechamento. Valores EXATOS armazenados em `fechamento_caixa.situacao`:
+ * "Aberto", "Fechado", "Conciliado" (nada é reinterpretado; caixas abertos nunca viram zero — só saem do
+ * recorte quando outro status é escolhido).
+ */
+export type FiltroStatusFechamento = "TODOS" | "Conciliado" | "Fechado" | "Aberto";
+
+export function filtrarLinhasPorStatus(linhas: CaixaAberturaFechamentoLinha[], status: FiltroStatusFechamento): CaixaAberturaFechamentoLinha[] {
+  return status === "TODOS" ? linhas : linhas.filter((l) => l.situacao === status);
+}
+
+/**
+ * Resumo dos "big numbers" a partir de um conjunto de linhas — EXATAMENTE as mesmas fórmulas de
+ * `aberturaFechamento.server.ts` (abertos = linhas; fechados = Fechado|Conciliado; emAberto = situação "Aberto";
+ * diferença financeira = soma de difFechamento), só aplicadas sobre o recorte filtrado.
+ */
+export function resumirLinhasFechamento(linhas: CaixaAberturaFechamentoLinha[]) {
+  return {
+    disponivel: linhas.length > 0,
+    abertos: linhas.length,
+    fechados: linhas.filter((l) => l.fechado).length,
+    emAberto: linhas.filter((l) => l.situacao === "Aberto").length,
+    diferencaFinanceira: linhas.reduce((soma, l) => soma + (l.difFechamento ?? 0), 0),
+  };
+}

@@ -145,7 +145,15 @@ export interface ControlesCaixaData {
     periodoInicio: Date | null;
     periodoFim: Date | null;
   };
-  quebraCaixa: { disponivel: boolean; totalGeral: number | null; porOperador: QuebraOperadorLinha[]; detalhado: QuebraDetalheLinha[] };
+  quebraCaixa: {
+    disponivel: boolean;
+    totalGeral: number | null;
+    porOperador: QuebraOperadorLinha[];
+    detalhado: QuebraDetalheLinha[];
+    /** Janela efetiva do período (ciclo 16→15 resolvido ou intervalo escolhido) — metadado para a análise por loja. */
+    periodoInicio?: Date | null;
+    periodoFim?: Date | null;
+  };
 }
 
 function baseIndisponivel(dataReferencia: Date, conectado: boolean): ControlesCaixaData {
@@ -574,7 +582,7 @@ export async function buscarQuebraCaixaDoPeriodo(
   const vazio: ControlesCaixaData["quebraCaixa"] = { disponivel: false, totalGeral: null, porOperador: [], detalhado: [] };
 
   const [fontePeriodo] = await db
-    .select({ id: fontesPorPeriodo.id })
+    .select({ id: fontesPorPeriodo.id, periodoInicio: fontesPorPeriodo.periodoInicio, periodoFim: fontesPorPeriodo.periodoFim })
     .from(fontesPorPeriodo)
     .where(
       and(
@@ -630,6 +638,8 @@ export async function buscarQuebraCaixaDoPeriodo(
     totalGeral: arred(detalhado.reduce((s, l) => s + l.valor, 0)),
     porOperador,
     detalhado,
+    periodoInicio: fontePeriodo.periodoInicio,
+    periodoFim: fontePeriodo.periodoFim,
   };
 }
 
@@ -698,6 +708,8 @@ export async function buscarQuebraCaixaDoIntervalo(
     totalGeral: arred(detalhado.reduce((s, l) => s + l.valor, 0)),
     porOperador,
     detalhado,
+    periodoInicio: inicio,
+    periodoFim: fim,
   };
 }
 
