@@ -1,11 +1,15 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
-import { EstadoVazio } from "@/components/ui/EstadoVazio";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Item, Situacao, moeda as moedaPainel, pct as pctPainel } from "@/components/ui/PainelAnalitico";
+import { PainelLojasComparativo, useComparacaoPeriodo, formatadorDiaPainel } from "./PainelLojasComparativo";
+import { semanaRealDoPeriodo } from "@/lib/rules/datas";
+import { buscarTrocoIntervalo } from "@/lib/actions/buscarTrocoIntervalo";
 import type { ControlesCaixaData } from "@/lib/services/controlesCaixa";
+import { agregarTroco, recortarLojaPainel, redeTroco, type DetalheTroco, type MetricaLoja } from "@/lib/services/controlesLojaPainel";
 
 /**
  * Sub-aba Troco (`renderTroco`, linha 3537 do legado). Conferência
@@ -35,19 +39,33 @@ const formatadorPercentual = new Intl.NumberFormat("pt-BR", { minimumFractionDig
 // padrão já aplicado em ConferenciaTab.tsx).
 const formatadorData = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
 
-export function TrocoTab({ dados, unidade }: { dados: ControlesCaixaData["troco"]; unidade?: CodigoUnidade }) {
-  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+export function TrocoTab({
+  dados,
+  unidade,
+  janela,
+  lojaFiltro,
+}: {
+  dados: ControlesCaixaData["troco"];
+  unidade?: CodigoUnidade;
+  /** Período SELECIONADO (data de referência: início = fim; ou intervalo escolhido). A aba o expande para semanas reais. */
+  janela: { inicio: Date; fim: Date };
+  lojaFiltro?: CodigoUnidade;
+}) {
   const linhas = unidade ? dados.linhas.filter((l) => l.unidade === unidade) : dados.linhas;
   const disponivel = unidade ? linhas.length > 0 : dados.disponivel;
 
-  function alternar(unidadeLinha: string) {
-    setExpandidas((atual) => {
-      const proximo = new Set(atual);
-      if (proximo.has(unidadeLinha)) proximo.delete(unidadeLinha);
-      else proximo.add(unidadeLinha);
-      return proximo;
-    });
-  }
+  // Período EFETIVO do Troco = semanas reais (seg–dom) que contêm as duas pontas — regra já existente da aba. O
+  // comparado é o equivalente anterior desse período efetivo (mesmo nº de semanas); a consulta usa a mesma função
+  // da aba, que reaplica a mesma expansão para semanas reais.
+  const inicioEfetivoMs = semanaRealDoPeriodo(janela.inicio).inicio.getTime();
+  const fimEfetivoMs = semanaRealDoPeriodo(janela.fim).fim.getTime();
+  const janelaEfetiva = useMemo(() => ({ inicio: new Date(inicioEfetivoMs), fim: new Date(fimEfetivoMs) }), [inicioEfetivoMs, fimEfetivoMs]);
+  const comp = useComparacaoPeriodo(janelaEfetiva, (ini, fim) => buscarTrocoIntervalo(ini, fim));
+  const atualPainel = useMemo(() => recortarLojaPainel(agregarTroco(linhas), lojaFiltro, redeTroco), [linhas, lojaFiltro]);
+  const comparadoPainel = useMemo(
+    () => (comp.dados ? recortarLojaPainel(agregarTroco(comp.dados.linhas), lojaFiltro, redeTroco) : null),
+    [comp.dados, lojaFiltro]
+  );
 
   const todasCaixas = useMemo(() => linhas.flatMap((l) => l.caixas), [linhas]);
   const conferidos = todasCaixas.filter((c) => c.status === "Conferido").length;
@@ -99,103 +117,101 @@ export function TrocoTab({ dados, unidade }: { dados: ControlesCaixaData["troco"
             </Card>
           </div>
 
-          {/* Tabela principal por loja */}
-          <Card className="overflow-x-auto p-0">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ragga-blue/10 text-left text-xs uppercase tracking-wide text-foreground/50">
-                  <th className="px-4 py-2">Loja</th>
-                  <th className="px-4 py-2">Qtd. caixas</th>
-                  <th className="px-4 py-2">Conferidos</th>
-                  <th className="px-4 py-2">Com divergência</th>
-                  <th className="px-4 py-2">Valor total da divergência</th>
-                  <th className="px-4 py-2">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {linhas.length === 0 ? (
-                  <EstadoVazio colSpan={6} />
-                ) : (
-                  linhas.map((linha) => {
-                    const conferidosLoja = linha.caixas.filter((c) => c.status === "Conferido").length;
-                    const divergentesLoja = linha.caixas.filter((c) => c.status === "Divergência");
-                    const valorDivergenciaLoja = divergentesLoja.reduce((s, c) => s + Math.abs(c.diferenca), 0);
-                    const statusLoja = divergentesLoja.length > 0 ? "Divergência" : "Conferido";
-                    return (
-                      <Fragment key={linha.unidade}>
-                        <tr
-                          onClick={() => alternar(linha.unidade)}
-                          className="cursor-pointer border-b border-ragga-blue/5 last:border-0 hover:bg-ragga-bg"
-                        >
-                          <td className="px-4 py-2 font-medium text-ragga-blue-dark">
-                            {expandidas.has(linha.unidade) ? "▾" : "▸"} {linha.unidade}
-                          </td>
-                          <td className="px-4 py-2">{linha.caixas.length}</td>
-                          <td className="px-4 py-2">{conferidosLoja}</td>
-                          <td className="px-4 py-2">{divergentesLoja.length}</td>
-                          <td className="px-4 py-2">{formatadorMoeda.format(valorDivergenciaLoja)}</td>
-                          <td className="px-4 py-2">
-                            <StatusBadge tom={TOM_POR_STATUS[statusLoja]} texto={statusLoja} />
-                          </td>
-                        </tr>
-                        {expandidas.has(linha.unidade) && (
-                          <tr>
-                            <td colSpan={6} className="bg-ragga-bg/50 px-4 py-3">
-                              <table className="w-full text-xs">
-                                <thead>
-                                  <tr className="text-left uppercase tracking-wide text-foreground/50">
-                                    <th className="px-2 py-1">Caixa</th>
-                                    <th className="px-2 py-1">Data</th>
-                                    <th className="px-2 py-1">Conferido</th>
-                                    <th className="px-2 py-1">Informado</th>
-                                    <th className="px-2 py-1">Diferença</th>
-                                    <th className="px-2 py-1">Status</th>
-                                    <th className="px-2 py-1">Operador</th>
-                                    <th className="px-2 py-1">Plano de ação</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {linha.caixas.map((caixa, i) => (
-                                    <tr
-                                      key={`${linha.unidade}-${caixa.caixa}-${i}`}
-                                      className={
-                                        caixa.status === "Divergência"
-                                          ? "bg-semaforo-vermelho/10"
-                                          : "border-b border-ragga-blue/5 last:border-0"
-                                      }
-                                    >
-                                      <td className="px-2 py-1.5 font-medium">{caixa.caixa}</td>
-                                      <td className="px-2 py-1.5">{formatadorData.format(caixa.data)}</td>
-                                      <td className="px-2 py-1.5">{formatadorMoeda.format(caixa.conferido)}</td>
-                                      <td className="px-2 py-1.5">{formatadorMoeda.format(caixa.informado)}</td>
-                                      <td
-                                        className={`px-2 py-1.5 ${
-                                          caixa.status === "Divergência" ? "font-semibold text-semaforo-vermelho" : ""
-                                        }`}
-                                      >
-                                        {formatadorMoeda.format(caixa.diferenca)}
-                                      </td>
-                                      <td className="px-2 py-1.5">
-                                        <StatusBadge tom={TOM_POR_STATUS[caixa.status]} texto={caixa.status} />
-                                      </td>
-                                      <td className="px-2 py-1.5">{caixa.operador ?? "—"}</td>
-                                      <td className="px-2 py-1.5">{caixa.planoDeAcao ?? "—"}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </Card>
+          {/* Tabela principal por loja (REDE → LOJA → caixas) com comparativo */}
+          <PainelLojasComparativo<DetalheTroco>
+            titulo="🏪 Troco por loja"
+            rotuloValor="Valor da divergência"
+            rotuloPercentual="% caixas c/ divergência"
+            periodoAtualTxt={`${formatadorDiaPainel.format(janelaEfetiva.inicio)} a ${formatadorDiaPainel.format(janelaEfetiva.fim)} (semanas reais)`}
+            compInicio={comp.compInicio}
+            compFim={comp.compFim}
+            compManual={comp.compManual}
+            setCompManual={comp.setCompManual}
+            carregando={comp.pendente}
+            atual={atualPainel}
+            comparacao={comparadoPainel}
+            lojaFiltro={lojaFiltro}
+            opcoesOrdem={[
+              { id: "valor", rotulo: "Valor (maior divergência primeiro)" },
+              { id: "percentual", rotulo: "Porcentagem" },
+              { id: "loja", rotulo: "Loja" },
+              { id: "performance", rotulo: "Performance / Status" },
+            ]}
+            ordemInicial="valor"
+            sentidoValor="magnitude"
+            colunasExtras={[
+              { titulo: "Qtd. caixas", celula: (l) => l.quantidade },
+              { titulo: "Com divergência", celula: (l) => l.detalhe.comDivergencia },
+            ]}
+            notaStatus="Valor da divergência = soma de |diferença| dos caixas em Divergência (diferença ≠ 0, regra existente). % = caixas com divergência ÷ caixas da loja. Status = situação do % contra o período comparado (menor = 🟢 melhorou · maior = 🔴 piorou). Não há meta/limite de Troco cadastrado."
+            renderDetalhe={(loja, c, temBase, periodoComp) => <DetalheTrocoLoja loja={loja} comparada={c} temBase={temBase} periodoComp={periodoComp} />}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+/** Expansão da loja: resumo comparado + os caixas já exibidos pela aba (Σ divergências = valor da loja). */
+function DetalheTrocoLoja({
+  loja,
+  comparada,
+  temBase,
+  periodoComp,
+}: {
+  loja: MetricaLoja<DetalheTroco>;
+  comparada: MetricaLoja<unknown> | null;
+  temBase: boolean;
+  periodoComp: string;
+}) {
+  const caixas = loja.detalhe.caixas;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-6">
+        <Item rotulo="Valor da divergência" valor={moedaPainel.format(loja.valor)} />
+        <Item rotulo="% caixas c/ divergência" valor={`${pctPainel.format(loja.percentual ?? 0)}%`} />
+        <Item rotulo="Caixas" valor={`${loja.detalhe.comDivergencia} de ${loja.quantidade} com divergência`} />
+        <Item rotulo="Comparado" valor={temBase && comparada ? `${moedaPainel.format(comparada.valor)} (${pctPainel.format(comparada.percentual ?? 0)}%)` : "Sem dados"} />
+        <Item rotulo="Período comparado" valor={periodoComp} />
+        <Item rotulo="Situação" valor={<Situacao atual={loja.grandeza} anterior={comparada?.grandeza ?? 0} temBase={temBase} />} />
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left uppercase tracking-wide text-foreground/50">
+            <th className="px-2 py-1">Caixa</th>
+            <th className="px-2 py-1">Data</th>
+            <th className="px-2 py-1">Conferido</th>
+            <th className="px-2 py-1">Informado</th>
+            <th className="px-2 py-1">Diferença</th>
+            <th className="px-2 py-1">Status</th>
+            <th className="px-2 py-1">Operador</th>
+            <th className="px-2 py-1">Plano de ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {caixas.map((caixa, i) => (
+            <tr key={`${loja.unidade}-${caixa.caixa}-${i}`} className={caixa.status === "Divergência" ? "bg-semaforo-vermelho/10" : "border-b border-ragga-blue/5 last:border-0"}>
+              <td className="px-2 py-1.5 font-medium">{caixa.caixa}</td>
+              <td className="px-2 py-1.5">{formatadorData.format(caixa.data)}</td>
+              <td className="px-2 py-1.5">{formatadorMoeda.format(caixa.conferido)}</td>
+              <td className="px-2 py-1.5">{formatadorMoeda.format(caixa.informado)}</td>
+              <td className={`px-2 py-1.5 ${caixa.status === "Divergência" ? "font-semibold text-semaforo-vermelho" : ""}`}>{formatadorMoeda.format(caixa.diferenca)}</td>
+              <td className="px-2 py-1.5">
+                <StatusBadge tom={TOM_POR_STATUS[caixa.status]} texto={caixa.status} />
+              </td>
+              <td className="px-2 py-1.5">{caixa.operador ?? "—"}</td>
+              <td className="px-2 py-1.5">{caixa.planoDeAcao ?? "—"}</td>
+            </tr>
+          ))}
+          <tr className="border-t border-ragga-blue/15 font-semibold text-ragga-blue-dark">
+            <td className="px-2 py-1.5" colSpan={4}>
+              Divergência líquida (com sinal) · valor da divergência (Σ |dif|) = {formatadorMoeda.format(loja.valor)}
+            </td>
+            <td className="px-2 py-1.5">{formatadorMoeda.format(loja.detalhe.diferencaLiquida)}</td>
+            <td colSpan={3} />
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }

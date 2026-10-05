@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
 import type { CorSemaforo } from "@/lib/rules/semaforos";
@@ -46,8 +46,7 @@ interface VisaoIndicador {
 }
 
 function visaoDoIndicador(ind: IndicadorDesempenho, loja: string): VisaoIndicador {
-  if (loja === "TODAS" || ind.id === "consumoFuncionarios") {
-    // Consumo de funcionários não tem limite por loja (quadro não informado): mantém a rede.
+  if (loja === "TODAS") {
     return {
       disponivel: ind.disponivel,
       semBase: ind.semBaseAvaliacao,
@@ -156,16 +155,6 @@ interface ConferenciaResumo {
   emAtraso?: number;
 }
 
-interface PrioridadeItem {
-  indicador: IndicadorDesempenhoId;
-  tituloIndicador: string;
-  unidade: string;
-  semaforo: CorSemaforo;
-  valor: number;
-  desvioReais: number;
-  desvioPercentual: number | null;
-}
-
 export function DesempenhoCaixa({
   dados,
   carregando,
@@ -183,26 +172,6 @@ export function DesempenhoCaixa({
   hrefConferencia: string;
 }) {
   const [aberto, setAberto] = useState<IndicadorDesempenhoId | null>(null);
-
-  const prioridades = useMemo<PrioridadeItem[]>(() => {
-    if (!dados) return [];
-    const itens: PrioridadeItem[] = [];
-    for (const ind of dados.indicadores) {
-      if (ind.id === "consumoFuncionarios") {
-        if (ind.disponivel && ind.semaforo === "vermelho" && ind.desvioReais !== null && ind.desvioReais > 0) {
-          itens.push({ indicador: ind.id, tituloIndicador: ind.titulo, unidade: "Rede", semaforo: "vermelho", valor: ind.valor, desvioReais: ind.desvioReais, desvioPercentual: ind.desvioPercentual });
-        }
-        continue;
-      }
-      for (const l of ind.porLoja) {
-        if (l.semLancamento || !l.semaforo || l.desvioReais === null || l.desvioReais <= 0) continue;
-        if (l.semaforo !== "vermelho" && l.semaforo !== "amarelo") continue;
-        if (loja !== "TODAS" && l.unidade !== loja) continue;
-        itens.push({ indicador: ind.id, tituloIndicador: ind.titulo, unidade: l.unidade, semaforo: l.semaforo, valor: l.valor, desvioReais: l.desvioReais, desvioPercentual: l.desvioPercentual });
-      }
-    }
-    return itens.sort((a, b) => (a.semaforo === b.semaforo ? b.desvioReais - a.desvioReais : a.semaforo === "vermelho" ? -1 : 1)).slice(0, 8);
-  }, [dados, loja]);
 
   useEffect(() => {
     if (!aberto) return;
@@ -224,36 +193,6 @@ export function DesempenhoCaixa({
 
   return (
     <>
-      <section className="rounded-2xl border border-semaforo-vermelho/20 bg-white p-5 sm:p-6">
-        <h2 className="mb-3 flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-ragga-blue-dark">
-          <span className="h-3.5 w-1 rounded-full bg-semaforo-vermelho" />
-          Prioridades de ação
-        </h2>
-        {prioridades.length === 0 ? (
-          <p className="text-sm text-foreground/55">Nenhuma loja fora da meta no período selecionado.</p>
-        ) : (
-          <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {prioridades.map((p) => (
-              <li key={`${p.indicador}-${p.unidade}`}>
-                <button
-                  type="button"
-                  onClick={() => setAberto(p.indicador)}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-ragga-blue/10 px-3 py-2 text-left text-sm transition-colors hover:bg-ragga-bg"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold text-ragga-blue-dark">{p.unidade} · {p.tituloIndicador}</span>
-                    <span className="block text-xs text-foreground/55">
-                      {moeda.format(p.valor)} · {reaisComSinal(p.desvioReais)}{p.desvioPercentual !== null ? ` (${pctComSinal(p.desvioPercentual)})` : ""} sobre a meta
-                    </span>
-                  </span>
-                  <SemaforoBadge cor={p.semaforo} texto={TEXTO_SEMAFORO[p.semaforo]} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
       <section className="rounded-2xl border border-ragga-blue/10 bg-white p-5 sm:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-ragga-blue-dark">
@@ -267,7 +206,6 @@ export function DesempenhoCaixa({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {dados.indicadores.map((ind) => {
             const v = visaoDoIndicador(ind, loja);
-            const consumoRede = ind.id === "consumoFuncionarios" && loja !== "TODAS";
             return (
               <CardDesempenho
                 key={ind.id}
@@ -275,11 +213,6 @@ export function DesempenhoCaixa({
                 v={v}
                 textoMeta={textoMetaDe(ind)}
                 onAbrir={() => setAberto(ind.id)}
-                extra={
-                  ind.consumo && ind.disponivel
-                    ? `${pct1.format(ind.consumo.percentualUtilizado)}% do limite · ${moeda.format(ind.consumo.mediaPorFuncionarioDia)} por funcionário/dia${consumoRede ? " (dado da rede)" : ""}`
-                    : undefined
-                }
               />
             );
           })}
@@ -322,15 +255,6 @@ export function DesempenhoCaixa({
             </div>
 
             <p className="mt-4 text-[2rem] font-extrabold leading-none text-ragga-blue-dark">{indicadorAberto.disponivel ? moeda.format(indicadorAberto.valor) : "—"}</p>
-            {indicadorAberto.consumo && (
-              <div className="mt-3 space-y-1 rounded-lg bg-ragga-bg p-3 text-xs text-foreground/70">
-                <p>Limite do período ({indicadorAberto.consumo.dias} {indicadorAberto.consumo.dias === 1 ? "dia" : "dias"}): <b>{moeda.format(indicadorAberto.consumo.limitePeriodo)}</b></p>
-                <p>Utilizado: <b>{pct1.format(indicadorAberto.consumo.percentualUtilizado)}%</b> · Média: <b>{moeda.format(indicadorAberto.consumo.mediaPorFuncionarioDia)}</b> por funcionário/dia (referência de {indicadorAberto.consumo.funcionariosReferencia} funcionários)</p>
-                {indicadorAberto.consumo.projecaoFechamento !== null && indicadorAberto.consumo.limiteMes !== null && (
-                  <p>Projeção de fechamento: <b>{moeda.format(indicadorAberto.consumo.projecaoFechamento)}</b> para um limite de {moeda.format(indicadorAberto.consumo.limiteMes)}</p>
-                )}
-              </div>
-            )}
             {indicadorAberto.nota && <p className="mt-3 text-xs text-foreground/55">{indicadorAberto.nota}</p>}
 
             {indicadorAberto.porLoja.length > 0 && (

@@ -1,0 +1,878 @@
+"use client";
+
+import { Fragment, useRef, useState, useTransition, type ReactNode } from "react";
+import { UNIDADES, type CodigoUnidade } from "@painel/shared";
+import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
+import { GraficoLinhaDiaria, NOME_DIA, diaDaSemana } from "@/components/ui/GraficoLinhaDiaria";
+import { PlanoAcaoCelula } from "@/components/indicadores/PlanoAcaoCelula";
+import { paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
+import { ehMesCalendarioCompleto, mesAnteriorCompleto } from "@/lib/rules/mesAnterior";
+import {
+  LIMITE_SAUDAVEL_COMPRA_DIRETA,
+  ROTULO_STATUS,
+  type CompraDiretaPainelData,
+  type DiaCompraDireta,
+  type LojaCompraDireta,
+  type MotivoCompraDireta,
+  type PeriodoCompraDireta,
+  type StatusCompraDireta,
+  compararMotivos,
+  situacaoCompraDireta,
+  variacaoCompraDireta,
+} from "@/lib/services/compraDiretaPainel";
+import { buscarCompraDiretaPainel } from "@/lib/actions/buscarCompraDiretaPainel";
+
+const moeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const pct = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function diaMesAno(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+}
+
+/** Escopo exibido (rede inteira ou uma loja) — mesmos campos nos dois casos. */
+interface Escopo {
+  disponivel: boolean;
+  faturamento: number;
+  valor: number;
+  percentual: number;
+  status: StatusCompraDireta;
+  cor: LojaCompraDireta["cor"];
+  motivos: MotivoCompraDireta[];
+  diario: DiaCompraDireta[];
+}
+
+function escopoDe(periodo: PeriodoCompraDireta, loja: string): Escopo {
+  if (loja === "TODAS") return periodo;
+  const l = periodo.porLoja.find((x) => x.unidade === loja);
+  if (!l) return { disponivel: false, faturamento: 0, valor: 0, percentual: 0, status: "controlado", cor: "verde", motivos: [], diario: [] };
+  return { disponivel: l.valor > 0 || l.motivos.length > 0, ...l };
+}
+
+type Formato = "moeda" | "pp";
+
+/**
+ * Variação entre período atual e comparado. `interpretar` = true só para Compra Direta
+ * (e seus motivos / % sobre faturamento): redução = melhora (verde), aumento = piora
+ * (vermelho). Faturamento NÃO é interpretado — apenas a variação matemática, em cinza.
+ */
+function TextoVariacao({ atual, anterior, formato = "moeda", interpretar = false }: { atual: number; anterior: number; formato?: Formato; interpretar?: boolean }) {
+  const delta = atual - anterior;
+  const seta = delta > 0 ? "↑" : delta < 0 ? "↓" : "=";
+  const cor = !interpretar || delta === 0 ? "text-foreground/70" : delta < 0 ? "text-semaforo-verde" : "text-semaforo-vermelho";
+  if (formato === "pp") {
+    return (
+      <span className={`font-semibold tabular-nums ${cor}`}>
+        {seta} {pct.format(Math.abs(delta))} p.p.
+      </span>
+    );
+  }
+  const p = anterior !== 0 ? (delta / anterior) * 100 : null;
+  return (
+    <span className={`font-semibold tabular-nums ${cor}`}>
+      {seta} {moeda.format(Math.abs(delta))}
+      {p !== null && ` (${delta >= 0 ? "+" : "-"}${pct.format(Math.abs(p))}%)`}
+    </span>
+  );
+}
+
+function Situacao({ atual, anterior }: { atual: number; anterior: number }) {
+  const situacao = situacaoCompraDireta(atual, anterior);
+  if (situacao === "sem-alteracao") return <span className="text-xs font-semibold text-foreground/50">Sem alteração</span>;
+  return situacao === "melhorou" ? (
+    <span className="whitespace-nowrap text-xs font-semibold text-semaforo-verde">🟢 Melhorou</span>
+  ) : (
+    <span className="whitespace-nowrap text-xs font-semibold text-semaforo-vermelho">🔴 Piorou</span>
+  );
+}
+
+/** Variação de um motivo: "🔴 +R$ 1.000,00 (+14,29%) Piorou" — % sempre sobre o valor do período comparado. */
+function VariacaoMotivo({ atual, comparado }: { atual: number; comparado: number }) {
+  const { delta, percentual, situacao } = variacaoCompraDireta(atual, comparado);
+  if (situacao === "sem-alteracao") return <span className="font-semibold text-foreground/55">⚪ Sem alteração</span>;
+  const sinal = delta > 0 ? "+" : "-";
+  const p = percentual !== null ? ` (${sinal}${pct.format(Math.abs(percentual))}%)` : " (sem base de comparação)";
+  const piorou = situacao === "piorou";
+  return (
+    <span className={`font-semibold ${piorou ? "text-semaforo-vermelho" : "text-semaforo-verde"}`}>
+      {piorou ? "🔴" : "🟢"} {sinal}
+      {moeda.format(Math.abs(delta))}
+      {p} <span className="text-xs font-semibold">{piorou ? "Piorou" : "Melhorou"}</span>
+    </span>
+  );
+}
+
+function Secao({ titulo, acao, children }: { titulo: string; acao?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-ragga-blue/10 bg-white p-5 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-ragga-blue-dark">
+          <span className="h-3.5 w-1 rounded-full bg-ragga-blue" />
+          {titulo}
+        </h2>
+        {acao}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function ToggleModo({ modo, aoAlterar }: { modo: "valor" | "percentual"; aoAlterar: (m: "valor" | "percentual") => void }) {
+  return (
+    <div className="flex overflow-hidden rounded-md border border-ragga-blue/15 text-xs font-medium">
+      {(["valor", "percentual"] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => aoAlterar(m)}
+          className={`px-3 py-1.5 ${modo === m ? "bg-ragga-blue text-white" : "bg-white text-ragga-blue-dark hover:bg-ragga-blue/5"}`}
+        >
+          {m === "valor" ? "R$" : "% do faturamento"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Evolução diária da Compra Direta: gráfico de linha compartilhado + tooltip de composição por motivo (hover). */
+function GraficoDiario({ dias, modo, altura = 230 }: { dias: DiaCompraDireta[]; modo: "valor" | "percentual"; altura?: number }) {
+  return (
+    <GraficoLinhaDiaria
+      dias={dias}
+      modo={modo}
+      altura={altura}
+      metaPercentual={LIMITE_SAUDAVEL_COMPRA_DIRETA}
+      rotuloMaior="Maior retirada"
+      rotuloMenor="Menor retirada"
+      textoAjuda="Passe o mouse sobre um ponto para ver os motivos do dia. Faixas suaves = sábado e domingo. Maior/menor consideram só dias com dado válido; dias sem registro ficam como lacuna na linha (nunca R$ 0 inventado)."
+      renderTooltip={(dia, { modo: m, y }) => {
+        const motivos = [...dia.motivos].filter((x) => x.valor > 0).sort((a, b) => b.valor - a.valor);
+        const total = motivos.reduce((t, x) => t + x.valor, 0);
+        return (
+          <>
+            <p className="text-xs font-bold text-ragga-blue">
+              📅 {diaMesAno(dia.data)} <span className="font-medium text-foreground/50">({NOME_DIA[diaDaSemana(dia.data)]})</span>
+            </p>
+            <p className="mt-0.5 text-xs text-foreground/60">
+              Total Compra Direta: <span className="text-sm font-extrabold tabular-nums text-ragga-blue-dark">{moeda.format(dia.valor)}</span>
+            </p>
+            {m === "percentual" && dia.faturamento > 0 && (
+              <p className="text-[11px] text-foreground/50">
+                {pct.format(y)}% do faturamento do dia ({moeda.format(dia.faturamento)})
+              </p>
+            )}
+            {motivos.length === 0 ? (
+              <p className="mt-2 text-xs text-foreground/50">Sem retiradas de Compra Direta neste dia.</p>
+            ) : (
+              <table className="mt-2 w-full text-xs tabular-nums">
+                <tbody>
+                  {motivos.map((x) => (
+                    <tr key={x.motivo}>
+                      <td className="py-0.5 pr-2 font-medium text-ragga-blue-dark">{x.motivo}</td>
+                      <td className="py-0.5 pr-2 text-right">{moeda.format(x.valor)}</td>
+                      <td className="py-0.5 text-right text-foreground/60">{pct.format((x.valor / total) * 100)}%</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-ragga-blue/20 font-bold text-ragga-blue-dark">
+                    <td className="pt-1 pr-2">Total</td>
+                    <td className="pt-1 pr-2 text-right">{moeda.format(total)}</td>
+                    <td className="pt-1 text-right">{pct.format(100)}%</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+          </>
+        );
+      }}
+    />
+  );
+}
+
+const ESTILO_CHIP: Record<StatusCompraDireta, { emoji: string; faixa: string; classe: string }> = {
+  controlado: { emoji: "🟢", faixa: "até 5%", classe: "border-semaforo-verde/30 bg-semaforo-verde/10" },
+  atencao: { emoji: "🟡", faixa: "acima de 5% até 7%", classe: "border-semaforo-amarelo/30 bg-semaforo-amarelo/10" },
+  critico: { emoji: "🔴", faixa: "acima de 7%", classe: "border-semaforo-vermelho/30 bg-semaforo-vermelho/10" },
+};
+
+const PESO_STATUS: Record<StatusCompraDireta, number> = { critico: 2, atencao: 1, controlado: 0 };
+
+type OrdemRanking = "valor" | "percentual" | "loja" | "criticidade";
+
+function distanciaTexto(percentual: number): string {
+  const d = percentual - LIMITE_SAUDAVEL_COMPRA_DIRETA;
+  return `${d >= 0 ? "+" : "-"}${pct.format(Math.abs(d))} p.p.`;
+}
+
+function CardGrande({ titulo, children }: { titulo: string; children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-ragga-blue/10 bg-white p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-foreground/45">{titulo}</p>
+      {children}
+    </div>
+  );
+}
+
+export function CompraDiretaPainel({
+  dadosIniciais,
+  periodoInicial,
+  lojaInicial = "TODAS",
+}: {
+  dadosIniciais: CompraDiretaPainelData;
+  periodoInicial: { inicio: string; fim: string; compInicio: string; compFim: string };
+  /** Loja pré-selecionada (navegação por ?loja=). */
+  lojaInicial?: string;
+}) {
+  const [dados, setDados] = useState(dadosIniciais);
+  const [inicio, setInicio] = useState(periodoInicial.inicio);
+  const [fim, setFim] = useState(periodoInicial.fim);
+  const [compInicio, setCompInicio] = useState(periodoInicial.compInicio);
+  const [compFim, setCompFim] = useState(periodoInicial.compFim);
+  const [compManual, setCompManual] = useState(false);
+  const [loja, setLoja] = useState(lojaInicial);
+  const [modoGrafico, setModoGrafico] = useState<"valor" | "percentual">("valor");
+  const [statusFiltro, setStatusFiltro] = useState<StatusCompraDireta | null>(null);
+  const [ordem, setOrdem] = useState<OrdemRanking>("percentual");
+  const [lojasAbertas, setLojasAbertas] = useState<Set<string>>(new Set());
+  const [pendente, iniciarTransicao] = useTransition();
+  const ultimaRequisicao = useRef(0);
+
+  const completa = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && Number(v.slice(0, 4)) >= 2000;
+
+  function carregar(i: string, f: string, ci: string, cf: string) {
+    // Valores intermediários da digitação (ano incompleto / início > fim) não consultam o servidor.
+    if (![i, f, ci, cf].every(completa) || i > f || ci > cf) return;
+    const req = ++ultimaRequisicao.current;
+    iniciarTransicao(async () => {
+      const r = await buscarCompraDiretaPainel(dataDoInput(i), dataDoInput(f), dataDoInput(ci), dataDoInput(cf));
+      if (req === ultimaRequisicao.current) setDados(r);
+    });
+  }
+
+  function alterarAtual(i: string, f: string) {
+    setInicio(i);
+    setFim(f);
+    let ci = compInicio;
+    let cf = compFim;
+    // Mês completo selecionado → sugere o mês anterior completo (enquanto o usuário não escolher outro período).
+    if (!compManual && completa(i) && completa(f)) {
+      const sugestao = mesAnteriorCompleto(dataDoInput(i), dataDoInput(f));
+      if (sugestao) {
+        ci = paraInputDate(sugestao.inicio);
+        cf = paraInputDate(sugestao.fim);
+        setCompInicio(ci);
+        setCompFim(cf);
+      }
+    }
+    carregar(i, f, ci, cf);
+  }
+
+  function alterarComparacao(ci: string, cf: string) {
+    setCompManual(true);
+    setCompInicio(ci);
+    setCompFim(cf);
+    carregar(inicio, fim, ci, cf);
+  }
+
+  function usarMesAnterior() {
+    const sugestao = mesAnteriorCompleto(dataDoInput(inicio), dataDoInput(fim));
+    if (!sugestao) return;
+    setCompManual(false);
+    const ci = paraInputDate(sugestao.inicio);
+    const cf = paraInputDate(sugestao.fim);
+    setCompInicio(ci);
+    setCompFim(cf);
+    carregar(inicio, fim, ci, cf);
+  }
+
+  function alternarLoja(unidade: string) {
+    setLojasAbertas((a) => {
+      const n = new Set(a);
+      if (n.has(unidade)) n.delete(unidade);
+      else n.add(unidade);
+      return n;
+    });
+  }
+
+  const atual = escopoDe(dados.atual, loja);
+  const comp = escopoDe(dados.comparacao, loja);
+  const podeComparar = atual.disponivel && comp.disponivel;
+  const mesCompleto = completa(inicio) && completa(fim) && ehMesCalendarioCompleto(dataDoInput(inicio), dataDoInput(fim));
+  const sugestaoMes = mesCompleto ? mesAnteriorCompleto(dataDoInput(inicio), dataDoInput(fim)) : null;
+  const compEhSugestao = sugestaoMes && paraInputDate(sugestaoMes.inicio) === compInicio && paraInputDate(sugestaoMes.fim) === compFim;
+
+  const linhasMotivoRede = compararMotivos(atual.motivos, comp.motivos);
+  const totalMotivosAtual = atual.motivos.reduce((t, m) => t + m.valor, 0);
+  const totalMotivosComp = comp.motivos.reduce((t, m) => t + m.valor, 0);
+
+  const lojasEscopo = dados.atual.porLoja.filter((l) => loja === "TODAS" || l.unidade === loja);
+  const contagem = lojasEscopo.reduce(
+    (c, l) => ({ ...c, [l.status]: c[l.status] + 1 }),
+    { controlado: 0, atencao: 0, critico: 0 } as Record<StatusCompraDireta, number>
+  );
+  const foraDoLimite = contagem.atencao + contagem.critico;
+
+  const ranking = [...lojasEscopo].sort((a, b) => {
+    switch (ordem) {
+      case "valor":
+        return b.valor - a.valor || a.unidade.localeCompare(b.unidade);
+      case "loja":
+        return a.unidade.localeCompare(b.unidade);
+      case "criticidade":
+        return PESO_STATUS[b.status] - PESO_STATUS[a.status] || b.percentual - a.percentual || a.unidade.localeCompare(b.unidade);
+      default:
+        return b.percentual - a.percentual || a.unidade.localeCompare(b.unidade);
+    }
+  });
+  const rankingVisivel = statusFiltro ? ranking.filter((l) => l.status === statusFiltro) : ranking;
+
+  const inputCls = "rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40";
+  const periodoAtualTxt = `${diaMesAno(inicio)} a ${diaMesAno(fim)}`;
+  const periodoCompTxt = `${diaMesAno(compInicio)} a ${diaMesAno(compFim)}`;
+
+  return (
+    <div className="space-y-5 bg-ragga-bg">
+      {/* FILTROS: período atual + período de comparação (livres) + loja */}
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-3 rounded-xl border border-ragga-blue/10 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(31,53,112,0.06)]">
+        <div>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-foreground/45">Período atual</p>
+          <div className="flex items-center gap-2 text-sm">
+            <input type="date" value={inicio} onChange={(e) => alterarAtual(e.target.value, fim)} className={inputCls} />
+            <span className="text-foreground/40">até</span>
+            <input type="date" value={fim} onChange={(e) => alterarAtual(inicio, e.target.value)} className={inputCls} />
+          </div>
+        </div>
+        <div>
+          <p className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+            Comparar com
+            {sugestaoMes && !compEhSugestao && (
+              <button type="button" onClick={usarMesAnterior} className="normal-case tracking-normal text-ragga-blue hover:underline">
+                ↺ usar mês anterior
+              </button>
+            )}
+            {compEhSugestao && <span className="normal-case tracking-normal text-foreground/40">(mês anterior sugerido)</span>}
+          </p>
+          <div className="flex items-center gap-2 text-sm">
+            <input type="date" value={compInicio} onChange={(e) => alterarComparacao(e.target.value, compFim)} className={inputCls} />
+            <span className="text-foreground/40">até</span>
+            <input type="date" value={compFim} onChange={(e) => alterarComparacao(compInicio, e.target.value)} className={inputCls} />
+          </div>
+        </div>
+        <div>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-foreground/45">Loja</p>
+          <select value={loja} onChange={(e) => setLoja(e.target.value)} className={inputCls}>
+            <option value="TODAS">Todas as lojas</option>
+            {UNIDADES.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
+          </select>
+        </div>
+        {pendente && <span className="pb-2 text-xs text-foreground/50">Carregando...</span>}
+      </div>
+      <p className="-mt-3 px-1 text-[11px] text-foreground/45">
+        Regra D-1 da aba: ocorrências de {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
+        {diaMesAno(dados.comparacao.inicioOcorrencia)} a {diaMesAno(dados.comparacao.fimOcorrencia)}).
+      </p>
+
+      {!dados.conectado && (
+        <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
+          Banco de dados ainda não conectado — nenhum valor foi inventado.
+        </div>
+      )}
+
+      {/* 1) RESULTADO — cards principais */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <CardGrande titulo="Faturamento">
+          <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">{atual.disponivel ? moeda.format(atual.faturamento) : "—"}</p>
+          {podeComparar ? (
+            <div className="mt-2 space-y-0.5 text-xs text-foreground/60">
+              <p>
+                Comparado: <span className="font-semibold tabular-nums">{moeda.format(comp.faturamento)}</span>
+              </p>
+              <p>
+                Variação: <TextoVariacao atual={atual.faturamento} anterior={comp.faturamento} />
+              </p>
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-foreground/45">{atual.disponivel ? "Sem dados no período comparado" : "Sem dados no período"}</p>
+          )}
+        </CardGrande>
+
+        <CardGrande titulo="Retirada Compra Direta">
+          <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">{atual.disponivel ? moeda.format(atual.valor) : "—"}</p>
+          {atual.disponivel ? (
+            <div className="mt-2 space-y-0.5 text-xs text-foreground/60">
+              <p>
+                <span className="font-semibold tabular-nums">{pct.format(atual.percentual)}%</span> do faturamento
+              </p>
+              <p>
+                Meta saudável: {pct.format(LIMITE_SAUDAVEL_COMPRA_DIRETA)}% · Distância: <span className="font-semibold tabular-nums">{distanciaTexto(atual.percentual)}</span>
+              </p>
+              <p className="pt-0.5">
+                <SemaforoBadge cor={atual.cor} texto={`Status: ${ROTULO_STATUS[atual.status]}`} />
+              </p>
+              {podeComparar && (
+                <>
+                  <p className="pt-1">
+                    Comparado: <span className="font-semibold tabular-nums">{moeda.format(comp.valor)}</span>
+                  </p>
+                  <p>
+                    Variação: <TextoVariacao atual={atual.valor} anterior={comp.valor} interpretar />
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-foreground/45">Sem dados no período</p>
+          )}
+        </CardGrande>
+
+        <CardGrande titulo="% sobre faturamento">
+          <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">{atual.disponivel ? `${pct.format(atual.percentual)}%` : "—"}</p>
+          {atual.disponivel ? (
+            <div className="mt-2 space-y-0.5 text-xs text-foreground/60">
+              <p>
+                Meta saudável: {pct.format(LIMITE_SAUDAVEL_COMPRA_DIRETA)}% · Distância: <span className="font-semibold tabular-nums">{distanciaTexto(atual.percentual)}</span>
+              </p>
+              <p className="pt-0.5">
+                <SemaforoBadge cor={atual.cor} texto={`Status: ${ROTULO_STATUS[atual.status]}`} />
+              </p>
+              {podeComparar && (
+                <>
+                  <p className="pt-1">
+                    Comparado: <span className="font-semibold tabular-nums">{pct.format(comp.percentual)}%</span>
+                  </p>
+                  <p>
+                    Variação: <TextoVariacao atual={atual.percentual} anterior={comp.percentual} formato="pp" interpretar />
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-foreground/45">Sem dados no período</p>
+          )}
+        </CardGrande>
+
+        <CardGrande titulo="Lojas fora do limite">
+          <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">
+            {foraDoLimite} de {lojasEscopo.length} {lojasEscopo.length === 1 ? "loja" : "lojas"}
+          </p>
+          <div className="mt-2 space-y-0.5 text-xs text-foreground/60">
+            <p>
+              🔴 <span className="font-semibold">{contagem.critico}</span> {contagem.critico === 1 ? "crítico" : "críticos"}
+            </p>
+            <p>
+              🟡 <span className="font-semibold">{contagem.atencao}</span> atenção
+            </p>
+            <p>
+              🟢 <span className="font-semibold">{contagem.controlado}</span> {contagem.controlado === 1 ? "controlada" : "controladas"}
+            </p>
+          </div>
+        </CardGrande>
+      </div>
+
+      {/* 2) COMPARAÇÃO */}
+      <Secao titulo="Comparativo de períodos">
+        <div className="mb-3 grid gap-1 text-xs text-foreground/60 sm:grid-cols-2">
+          <p>
+            <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt}
+          </p>
+          <p>
+            <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt}
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                <th className="py-2 pr-4">Indicador</th>
+                <th className="px-3 py-2">Atual</th>
+                <th className="px-3 py-2">Comparado</th>
+                <th className="px-3 py-2">Variação</th>
+              </tr>
+            </thead>
+            <tbody className="tabular-nums">
+              <tr className="border-b border-ragga-blue/5">
+                <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">Faturamento</td>
+                <td className="px-3">{atual.disponivel ? moeda.format(atual.faturamento) : "Sem dados"}</td>
+                <td className="px-3">{comp.disponivel ? moeda.format(comp.faturamento) : "Sem dados"}</td>
+                <td className="px-3">{podeComparar ? <TextoVariacao atual={atual.faturamento} anterior={comp.faturamento} /> : "—"}</td>
+              </tr>
+              <tr className="border-b border-ragga-blue/5">
+                <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">Compra Direta</td>
+                <td className="px-3">{atual.disponivel ? moeda.format(atual.valor) : "Sem dados"}</td>
+                <td className="px-3">{comp.disponivel ? moeda.format(comp.valor) : "Sem dados"}</td>
+                <td className="px-3">{podeComparar ? <TextoVariacao atual={atual.valor} anterior={comp.valor} interpretar /> : "—"}</td>
+              </tr>
+              <tr>
+                <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">% sobre faturamento</td>
+                <td className="px-3">{atual.disponivel ? `${pct.format(atual.percentual)}%` : "Sem dados"}</td>
+                <td className="px-3">{comp.disponivel ? `${pct.format(comp.percentual)}%` : "Sem dados"}</td>
+                <td className="px-3">{podeComparar ? <TextoVariacao atual={atual.percentual} anterior={comp.percentual} formato="pp" interpretar /> : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[11px] text-foreground/40">
+          Compra Direta e % sobre faturamento: redução = melhora (verde), aumento = piora (vermelho). Faturamento: apenas a variação matemática.
+        </p>
+      </Secao>
+
+      {/* COMPARATIVO POR MOTIVO — análise da rede/escopo selecionado (a da loja fica na expansão) */}
+      <Secao titulo="Comparativo por motivo">
+        <div className="mb-3 grid gap-1 text-xs text-foreground/60 sm:grid-cols-2">
+          <p>
+            <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt}
+          </p>
+          <p>
+            <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt}
+          </p>
+        </div>
+        {linhasMotivoRede.length === 0 ? (
+          <p className="text-sm text-foreground/45">Sem dados nos períodos.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                  <th className="py-2 pr-4">Motivo</th>
+                  <th className="px-3 py-2">Atual</th>
+                  <th className="px-3 py-2">Comparado</th>
+                  <th className="px-3 py-2">Variação</th>
+                </tr>
+              </thead>
+              <tbody className="tabular-nums">
+                {linhasMotivoRede.map((m) => (
+                  <tr key={m.motivo} className="border-b border-ragga-blue/5">
+                    <td className="py-2.5 pr-4 font-medium text-ragga-blue-dark">{m.motivo}</td>
+                    <td className="px-3">{moeda.format(m.atual?.valor ?? 0)}</td>
+                    <td className="px-3">{comp.disponivel ? moeda.format(m.comparado?.valor ?? 0) : "Sem dados"}</td>
+                    <td className="px-3">{comp.disponivel ? <VariacaoMotivo atual={m.atual?.valor ?? 0} comparado={m.comparado?.valor ?? 0} /> : "—"}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-ragga-blue/20 font-bold text-ragga-blue-dark">
+                  <td className="py-2.5 pr-4">TOTAL</td>
+                  <td className="px-3">{moeda.format(totalMotivosAtual)}</td>
+                  <td className="px-3">{comp.disponivel ? moeda.format(totalMotivosComp) : "Sem dados"}</td>
+                  <td className="px-3">{comp.disponivel ? <VariacaoMotivo atual={totalMotivosAtual} comparado={totalMotivosComp} /> : "—"}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-2 text-[11px] text-foreground/40">
+          Percentual calculado sobre o valor do período comparado. 🔴 aumento da retirada = piorou · 🟢 redução = melhorou · ⚪ sem alteração.
+        </p>
+      </Secao>
+
+      {/* Evolução diária */}
+      <Secao titulo="Evolução por dia" acao={<ToggleModo modo={modoGrafico} aoAlterar={setModoGrafico} />}>
+        <GraficoDiario dias={atual.diario} modo={modoGrafico} />
+      </Secao>
+
+      {/* 4) MOTIVO — Pareto (antes do ranking de lojas) */}
+      <Secao titulo="Principais motivos da Compra Direta">
+        {atual.motivos.length === 0 ? <p className="text-sm text-foreground/45">Sem dados no período.</p> : <TabelaMotivos motivos={atual.motivos} />}
+      </Secao>
+
+      {/* 3) LOJA — semáforo + ranking */}
+      <Secao
+        titulo="Ranking de performance por loja"
+        acao={
+          <label className="flex items-center gap-2 text-xs font-medium text-ragga-blue-dark">
+            Ordenar por
+            <select value={ordem} onChange={(e) => setOrdem(e.target.value as OrdemRanking)} className="rounded-md border border-ragga-blue/15 bg-white px-2 py-1.5 text-xs">
+              <option value="valor">Valor</option>
+              <option value="percentual">Porcentagem</option>
+              <option value="loja">Loja</option>
+              <option value="criticidade">Performance / Criticidade</option>
+            </select>
+          </label>
+        }
+      >
+        <div className="mb-4 flex flex-wrap gap-2">
+          {(["controlado", "atencao", "critico"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatusFiltro((a) => (a === s ? null : s))}
+              aria-pressed={statusFiltro === s}
+              className={`rounded-lg border px-3 py-2 text-left text-sm transition-shadow ${ESTILO_CHIP[s].classe} ${statusFiltro === s ? "ring-2 ring-ragga-blue/50" : "hover:shadow-sm"}`}
+            >
+              <span className="font-bold text-ragga-blue-dark">
+                {ESTILO_CHIP[s].emoji} {contagem[s]} {contagem[s] === 1 ? "loja" : "lojas"}
+              </span>
+              <span className="block text-xs text-foreground/60">
+                {ROTULO_STATUS[s]} — {ESTILO_CHIP[s].faixa}
+              </span>
+            </button>
+          ))}
+          {statusFiltro && (
+            <button type="button" onClick={() => setStatusFiltro(null)} className="self-center text-xs font-semibold text-ragga-blue hover:underline">
+              limpar filtro
+            </button>
+          )}
+        </div>
+
+        <div className="-mx-5 overflow-x-auto sm:-mx-6">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                <th className="px-5 py-2.5 sm:px-6">Loja</th>
+                <th className="px-4 py-2.5">Faturamento</th>
+                <th className="px-4 py-2.5">Compra Direta</th>
+                <th className="px-4 py-2.5">% fat.</th>
+                <th className="px-4 py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rankingVisivel.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-5 py-6 text-center text-sm text-foreground/45 sm:px-6">
+                    Nenhuma loja neste filtro.
+                  </td>
+                </tr>
+              ) : (
+                rankingVisivel.map((l) => {
+                  const aberta = lojasAbertas.has(l.unidade);
+                  const compLoja = dados.comparacao.porLoja.find((x) => x.unidade === l.unidade);
+                  return (
+                    <Fragment key={l.unidade}>
+                      <tr onClick={() => alternarLoja(l.unidade)} className="cursor-pointer border-b border-ragga-blue/5 hover:bg-ragga-blue/[0.04]">
+                        <td className="px-5 py-3 font-semibold text-ragga-blue-dark sm:px-6">
+                          <span className="mr-1.5 inline-block w-3 text-ragga-blue/45">{aberta ? "▾" : "▸"}</span>
+                          {l.unidade}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">{moeda.format(l.faturamento)}</td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">{moeda.format(l.valor)}</td>
+                        <td className="px-4 py-3 tabular-nums font-semibold text-ragga-blue-dark">{pct.format(l.percentual)}%</td>
+                        <td className="px-4 py-3">
+                          <SemaforoBadge cor={l.cor} texto={`${ESTILO_CHIP[l.status].emoji} ${ROTULO_STATUS[l.status]}`} />
+                        </td>
+                      </tr>
+                      {aberta && (
+                        <tr>
+                          <td colSpan={5} className="bg-ragga-bg/60 px-5 py-4 sm:px-6">
+                            <DetalheLoja loja={l} compLoja={compLoja} dataOcorrencia={dataDoInput(dados.atual.fimOcorrencia)} periodoAtual={periodoAtualTxt} periodoComp={periodoCompTxt} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Secao>
+    </div>
+  );
+}
+
+function TabelaMotivos({ motivos }: { motivos: MotivoCompraDireta[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+            <th className="py-2 pr-4">Motivo</th>
+            <th className="px-3 py-2">Valor</th>
+            <th className="px-3 py-2">% do total</th>
+            <th className="px-3 py-2">% acumulado</th>
+          </tr>
+        </thead>
+        <tbody className="tabular-nums">
+          {motivos.map((m) => (
+            <tr key={m.motivo} className="border-b border-ragga-blue/5 last:border-0">
+              <td className="py-2.5 pr-4 font-medium text-ragga-blue-dark">{m.motivo}</td>
+              <td className="px-3">{moeda.format(m.valor)}</td>
+              <td className="px-3">{pct.format(m.percentualDoTotal)}%</td>
+              <td className="min-w-[10rem] px-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-ragga-blue/10">
+                    <div className="h-full rounded-full bg-gradient-to-r from-ragga-blue to-ragga-blue-dark" style={{ width: `${Math.min(100, m.percentualAcumulado)}%` }} />
+                  </div>
+                  <span className="w-14 text-right text-xs text-foreground/60">{pct.format(m.percentualAcumulado)}%</span>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Expansão da loja: resumo → comparativo → comparativo por motivo (+ orientação) → evolução diária. */
+function DetalheLoja({
+  loja,
+  compLoja,
+  dataOcorrencia,
+  periodoAtual,
+  periodoComp,
+}: {
+  loja: LojaCompraDireta;
+  compLoja?: LojaCompraDireta;
+  dataOcorrencia: Date;
+  periodoAtual: string;
+  periodoComp: string;
+}) {
+  const [modo, setModo] = useState<"valor" | "percentual">("valor");
+  // "Sem dados" no período comparado só quando a loja nem operou (sem faturamento) nem retirou.
+  const temComp = !!compLoja && (compLoja.faturamento > 0 || compLoja.valor > 0);
+
+  const linhasMotivo = compararMotivos(loja.motivos, compLoja?.motivos ?? []);
+  const totalAtual = loja.motivos.reduce((s, m) => s + m.valor, 0);
+  const totalComp = compLoja?.motivos.reduce((s, m) => s + m.valor, 0) ?? 0;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">Resumo da loja</p>
+        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+          <Item rotulo="Faturamento" valor={moeda.format(loja.faturamento)} />
+          <Item rotulo="Compra Direta" valor={moeda.format(loja.valor)} />
+          <Item rotulo="% sobre faturamento" valor={`${pct.format(loja.percentual)}%`} />
+          <Item rotulo="Limite saudável" valor={`${pct.format(LIMITE_SAUDAVEL_COMPRA_DIRETA)}%`} />
+          <Item rotulo="Distância do limite" valor={distanciaTexto(loja.percentual)} />
+          <Item rotulo="Status" valor={<SemaforoBadge cor={loja.cor} texto={`${ESTILO_CHIP[loja.status].emoji} ${ROTULO_STATUS[loja.status]}`} />} />
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">Comparativo</p>
+        {temComp && compLoja ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm tabular-nums">
+              <thead>
+                <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                  <th className="py-1 pr-3" />
+                  <th className="px-2 py-1">Atual<span className="block font-normal normal-case">{periodoAtual}</span></th>
+                  <th className="px-2 py-1">Comparado<span className="block font-normal normal-case">{periodoComp}</span></th>
+                  <th className="px-2 py-1">Variação</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="py-1 pr-3 font-medium text-ragga-blue-dark">Faturamento</td>
+                  <td className="px-2">{moeda.format(loja.faturamento)}</td>
+                  <td className="px-2">{moeda.format(compLoja.faturamento)}</td>
+                  <td className="px-2"><TextoVariacao atual={loja.faturamento} anterior={compLoja.faturamento} /></td>
+                </tr>
+                <tr>
+                  <td className="py-1 pr-3 font-medium text-ragga-blue-dark">Compra Direta</td>
+                  <td className="px-2">{moeda.format(loja.valor)}</td>
+                  <td className="px-2">{moeda.format(compLoja.valor)}</td>
+                  <td className="px-2">
+                    <TextoVariacao atual={loja.valor} anterior={compLoja.valor} interpretar /> <Situacao atual={loja.valor} anterior={compLoja.valor} />
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-1 pr-3 font-medium text-ragga-blue-dark">% sobre faturamento</td>
+                  <td className="px-2">{pct.format(loja.percentual)}%</td>
+                  <td className="px-2">{pct.format(compLoja.percentual)}%</td>
+                  <td className="px-2"><TextoVariacao atual={loja.percentual} anterior={compLoja.percentual} formato="pp" interpretar /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-foreground/45">Sem dados da loja no período comparado.</p>
+        )}
+      </div>
+
+      <div>
+        <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">Comparativo por motivo</p>
+        <p className="mb-2 text-[11px] text-foreground/45">
+          Participação = valor do motivo ÷ total de Compra Direta da loja no período (não é sobre o faturamento). Valor menor = 🟢 melhorou; maior = 🔴 piorou.
+        </p>
+        {linhasMotivo.length === 0 ? (
+          <p className="text-sm text-foreground/45">Sem retiradas nos períodos.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm tabular-nums">
+              <thead>
+                <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                  <th className="py-1 pr-3">Motivo</th>
+                  <th className="px-2 py-1">Atual<span className="block font-normal normal-case">valor — participação</span></th>
+                  <th className="px-2 py-1">Comparado<span className="block font-normal normal-case">valor — participação</span></th>
+                  <th className="px-2 py-1">Variação</th>
+                  <th className="px-2 py-1">Situação</th>
+                  <th className="px-2 py-1">Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {linhasMotivo.map((m) => {
+                  const va = m.atual?.valor ?? 0;
+                  const vc = m.comparado?.valor ?? 0;
+                  return (
+                    <tr key={m.motivo} className="border-t border-ragga-blue/5 align-top">
+                      <td className="py-1.5 pr-3 font-medium text-ragga-blue-dark">{m.motivo}</td>
+                      <td className="px-2">
+                        {moeda.format(va)}
+                        <span className="block text-xs text-foreground/50">{pct.format(m.atual?.percentualDoTotal ?? 0)}%</span>
+                      </td>
+                      <td className="px-2">
+                        {temComp ? moeda.format(vc) : "Sem dados"}
+                        {temComp && <span className="block text-xs text-foreground/50">{pct.format(m.comparado?.percentualDoTotal ?? 0)}%</span>}
+                      </td>
+                      <td className="px-2">{temComp ? <TextoVariacao atual={va} anterior={vc} interpretar /> : "—"}</td>
+                      <td className="px-2">{temComp ? <Situacao atual={va} anterior={vc} /> : "—"}</td>
+                      <td className="px-2">
+                        {va > 0 ? (
+                          <PlanoAcaoCelula
+                            indicador="Retirada Compra Direta"
+                            unidade={loja.unidade as CodigoUnidade}
+                            motivo={m.motivo}
+                            valor={va}
+                            percentualFaturamento={loja.faturamento > 0 ? (va / loja.faturamento) * 100 : 0}
+                            dataOcorrencia={dataOcorrencia}
+                          />
+                        ) : (
+                          <span className="text-xs text-foreground/30">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr className="border-t border-ragga-blue/15 font-semibold text-ragga-blue-dark">
+                  <td className="py-1.5 pr-3">Total</td>
+                  <td className="px-2">
+                    {moeda.format(totalAtual)}
+                    <span className="block text-xs font-normal text-foreground/50">{pct.format(loja.motivos.reduce((s, m) => s + m.percentualDoTotal, 0))}%</span>
+                  </td>
+                  <td className="px-2">
+                    {temComp ? moeda.format(totalComp) : "Sem dados"}
+                    {temComp && (
+                      <span className="block text-xs font-normal text-foreground/50">{pct.format((compLoja?.motivos ?? []).reduce((s, m) => s + m.percentualDoTotal, 0))}%</span>
+                    )}
+                  </td>
+                  <td className="px-2">{temComp ? <TextoVariacao atual={totalAtual} anterior={totalComp} interpretar /> : "—"}</td>
+                  <td className="px-2">{temComp ? <Situacao atual={totalAtual} anterior={totalComp} /> : "—"}</td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">Evolução diária — {loja.unidade}</p>
+          <ToggleModo modo={modo} aoAlterar={setModo} />
+        </div>
+        <GraficoDiario dias={loja.diario} modo={modo} altura={190} />
+      </div>
+    </div>
+  );
+}
+
+function Item({ rotulo, valor }: { rotulo: string; valor: ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-wide text-foreground/45">{rotulo}</p>
+      <p className="mt-0.5 font-semibold tabular-nums text-ragga-blue-dark">{valor}</p>
+    </div>
+  );
+}

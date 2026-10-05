@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import type { CodigoUnidade } from "@painel/shared";
 import type { ControlesCaixaData } from "@/lib/services/controlesCaixa";
 import type { AberturaFechamentoData } from "@/lib/services/aberturaFechamento";
@@ -117,6 +117,16 @@ export function ControlesCaixaTabs({
     if (periodo) aplicarPeriodo(periodo.inicio, periodo.fim, nova);
   }
 
+  // Período SELECIONADO (base do comparativo por loja das sub-abas Fechamento, PDV × Maquininha e Troco): o intervalo
+  // escolhido ou, sem período, a data de referência (dia único). Cada sub-aba aplica a sua própria regra de janela.
+  const janelaSelecionada = useMemo(
+    () =>
+      periodo && periodo.inicio && periodo.fim
+        ? { inicio: dataDoInput(periodo.inicio), fim: dataDoInput(periodo.fim) }
+        : { inicio: dataDoInput(dataSelecionada), fim: dataDoInput(dataSelecionada) },
+    [periodo, dataSelecionada]
+  );
+
   const fechamentoExibido = dadosPeriodo?.fechamento ?? dadosFechamento;
   const pdvExibido = dadosPeriodo?.pdvMaquininha ?? dados.pdvMaquininha;
   const trocoExibido = dadosPeriodo?.troco ?? dados.troco;
@@ -203,13 +213,21 @@ export function ControlesCaixaTabs({
       </div>
 
       <div className="px-6 py-6">
-        {subAtiva === "fechamento" && <FechamentoTab dados={fechamentoExibido} unidade={periodo ? undefined : unidadeFiltro} />}
-        {subAtiva === "pdv" && (
-          <PdvMaquininhaTab dados={pdvExibido} dataReferencia={dataDoInput(dataSelecionada)} unidade={periodo ? undefined : unidadeFiltro} />
+        {subAtiva === "fechamento" && (
+          <FechamentoTab dados={fechamentoExibido} unidade={periodo ? undefined : unidadeFiltro} janela={janelaSelecionada} lojaFiltro={unidadeFiltro} />
         )}
-        {subAtiva === "troco" && <TrocoTab dados={trocoExibido} unidade={periodo ? undefined : unidadeFiltro} />}
+        {subAtiva === "pdv" && (
+          <PdvMaquininhaTab
+            dados={pdvExibido}
+            dataReferencia={dataDoInput(dataSelecionada)}
+            unidade={periodo ? undefined : unidadeFiltro}
+            janela={janelaSelecionada}
+            lojaFiltro={unidadeFiltro}
+          />
+        )}
+        {subAtiva === "troco" && <TrocoTab dados={trocoExibido} unidade={periodo ? undefined : unidadeFiltro} janela={janelaSelecionada} lojaFiltro={unidadeFiltro} />}
         {subAtiva === "conferencia" && <ConferenciaTab dados={conferenciaExibido} unidade={periodo ? undefined : unidadeFiltro} />}
-        {subAtiva === "quebra" && <QuebraCaixaTab dados={quebraExibido} unidade={periodo ? undefined : unidadeFiltro} />}
+        {subAtiva === "quebra" && <QuebraCaixaTab dados={quebraExibido} unidade={periodo ? undefined : unidadeFiltro} lojaFiltro={unidadeFiltro} />}
       </div>
     </div>
   );

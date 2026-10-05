@@ -1,13 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
 import { EstadoVazio } from "@/components/ui/EstadoVazio";
+import { Item, Situacao, moeda as moedaPainel } from "@/components/ui/PainelAnalitico";
+import { PainelLojasComparativo, useComparacaoPeriodo, formatadorDiaPainel } from "./PainelLojasComparativo";
+import { buscarAberturaFechamentoIntervalo } from "@/lib/actions/buscarAberturaFechamentoIntervalo";
+import { agregarFechamento, recortarLojaPainel, redeFechamento, type MetricaLoja } from "@/lib/services/controlesLojaPainel";
 import {
   filtrarLinhasPorStatus,
   resumirLinhasFechamento,
   type AberturaFechamentoData,
+  type CaixaAberturaFechamentoLinha,
   type FiltroStatusFechamento,
 } from "@/lib/services/aberturaFechamento";
 
@@ -44,7 +49,19 @@ function BigNumberCard({ titulo, valor, disponivel }: { titulo: string; valor: s
   );
 }
 
-export function FechamentoTab({ dados, unidade }: { dados: AberturaFechamentoData; unidade?: CodigoUnidade }) {
+export function FechamentoTab({
+  dados,
+  unidade,
+  janela,
+  lojaFiltro,
+}: {
+  dados: AberturaFechamentoData;
+  unidade?: CodigoUnidade;
+  /** Período usado pela aba (data de referência exata ou intervalo escolhido) — base do comparativo por loja. */
+  janela: { inicio: Date; fim: Date };
+  /** Loja selecionada no filtro (mostra só ela na tabela por loja). */
+  lojaFiltro?: CodigoUnidade;
+}) {
   // Filtro de STATUS (Todos/Conciliado/Fechado/Aberto): recorta as linhas já carregadas (junto com Loja/Data) e
   // recalcula os big numbers com as MESMAS fórmulas. "Todos" sem loja mantém exatamente os agregados do serviço.
   const [status, setStatus] = useState<FiltroStatusFechamento>("TODOS");
@@ -58,6 +75,19 @@ export function FechamentoTab({ dados, unidade }: { dados: AberturaFechamentoDat
   const emAberto = usarAgregadoDoServico ? dados.emAberto : resumo.emAberto;
   const diferencaFinanceira = usarAgregadoDoServico ? dados.diferencaFinanceira : resumo.diferencaFinanceira;
   const semDadosPorStatus = status !== "TODOS" && linhas.length === 0;
+
+  // Análise por loja (REDE → LOJA → caixas) + comparativo: Fechamento = data exata, então o período comparado é o
+  // equivalente anterior do MESMO período (mesma duração); consulta com a mesma função já usada pela aba.
+  const comp = useComparacaoPeriodo(janela, (ini, fim) => buscarAberturaFechamentoIntervalo(ini, fim));
+  const atualPainel = useMemo(() => recortarLojaPainel(agregarFechamento(linhas), lojaFiltro, redeFechamento), [linhas, lojaFiltro]);
+  const comparadoPainel = useMemo(
+    () => (comp.dados ? recortarLojaPainel(agregarFechamento(filtrarLinhasPorStatus(comp.dados.linhas, status)), lojaFiltro, redeFechamento) : null),
+    [comp.dados, status, lojaFiltro]
+  );
+  const periodoAtualTxt =
+    janela.inicio.getTime() === janela.fim.getTime()
+      ? formatadorDiaPainel.format(janela.inicio)
+      : `${formatadorDiaPainel.format(janela.inicio)} a ${formatadorDiaPainel.format(janela.fim)}`;
 
   return (
     <div className="space-y-4">
@@ -95,6 +125,34 @@ export function FechamentoTab({ dados, unidade }: { dados: AberturaFechamentoDat
         />
       </div>
 
+      <PainelLojasComparativo<CaixaAberturaFechamentoLinha[]>
+        titulo="🏪 Fechamento de caixa por loja"
+        rotuloValor="Diferença"
+        periodoAtualTxt={periodoAtualTxt}
+        compInicio={comp.compInicio}
+        compFim={comp.compFim}
+        compManual={comp.compManual}
+        setCompManual={comp.setCompManual}
+        carregando={comp.pendente}
+        atual={atualPainel}
+        comparacao={comparadoPainel}
+        lojaFiltro={lojaFiltro}
+        opcoesOrdem={[
+          { id: "valor", rotulo: "Valor (mais negativo primeiro)" },
+          { id: "loja", rotulo: "Loja" },
+          { id: "performance", rotulo: "Performance / Status" },
+        ]}
+        ordemInicial="valor"
+        sentidoValor="negativo-primeiro"
+        colunasExtras={[
+          { titulo: "Caixas", celula: (l) => l.quantidade },
+          { titulo: "Em aberto", celula: (l) => l.detalhe.filter((x) => x.situacao === "Aberto").length },
+        ]}
+        notaStatus="Diferença = soma das diferenças nos fechamentos realizados pelo operador (com sinal: negativo = falta). Status = distância até zero contra o período comparado (menor = 🟢 melhorou · maior = 🔴 piorou). Não há meta/limite de Fechamento cadastrado. O filtro de Status acima vale para esta tabela."
+        renderDetalhe={(loja, c, temBase, periodoComp) => <DetalheFechamentoLoja loja={loja} comparada={c} temBase={temBase} periodoComp={periodoComp} />}
+      />
+
+      <p className="pt-2 text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">Detalhamento por caixa</p>
       <Card className="overflow-x-auto p-0">
         <table className="w-full text-sm">
           <thead>
@@ -140,6 +198,67 @@ export function FechamentoTab({ dados, unidade }: { dados: AberturaFechamentoDat
           </tbody>
         </table>
       </Card>
+    </div>
+  );
+}
+
+/** Expansão da loja: caixas que compõem a diferença (mais negativos primeiro) — Σ = diferença da loja. */
+function DetalheFechamentoLoja({
+  loja,
+  comparada,
+  temBase,
+  periodoComp,
+}: {
+  loja: MetricaLoja<CaixaAberturaFechamentoLinha[]>;
+  comparada: MetricaLoja<unknown> | null;
+  temBase: boolean;
+  periodoComp: string;
+}) {
+  const caixas = [...loja.detalhe].sort((a, b) => (a.difFechamento ?? 0) - (b.difFechamento ?? 0) || a.caixa.localeCompare(b.caixa));
+  const total = caixas.reduce((s, c) => s + (c.difFechamento ?? 0), 0);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-6">
+        <Item rotulo="Diferença atual" valor={moedaPainel.format(loja.valor)} />
+        <Item rotulo="Caixas" valor={String(loja.quantidade)} />
+        <Item rotulo="Comparado" valor={temBase && comparada ? `${moedaPainel.format(comparada.valor)} (${comparada.quantidade} caixas)` : "Sem dados"} />
+        <Item rotulo="Período comparado" valor={periodoComp} />
+        <Item rotulo="Situação" valor={<Situacao atual={loja.grandeza} anterior={comparada?.grandeza ?? 0} temBase={temBase} />} />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm tabular-nums">
+          <thead>
+            <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+              <th className="py-1 pr-3">Caixa</th>
+              <th className="px-2 py-1">Movimento</th>
+              <th className="px-2 py-1">Operador</th>
+              <th className="px-2 py-1">Situação</th>
+              <th className="px-2 py-1">Dif. Fechamento</th>
+              <th className="px-2 py-1">Dif. Conciliação</th>
+              <th className="px-2 py-1">Dif. Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {caixas.map((c, i) => (
+              <tr key={`${c.caixa}-${c.movimento}-${i}`} className="border-t border-ragga-blue/5">
+                <td className="py-1.5 pr-3 font-medium text-ragga-blue-dark">{c.caixa}</td>
+                <td className="px-2">{c.movimento}</td>
+                <td className="px-2">{c.operador ?? "—"}</td>
+                <td className="px-2">{c.situacao}</td>
+                <td className={`px-2 ${(c.difFechamento ?? 0) < 0 ? "font-semibold text-semaforo-vermelho" : ""}`}>{c.difFechamento !== null ? formatadorMoeda.format(c.difFechamento) : "—"}</td>
+                <td className="px-2">{c.difConciliacao !== null ? formatadorMoeda.format(c.difConciliacao) : "—"}</td>
+                <td className="px-2">{c.difTotal !== null ? formatadorMoeda.format(c.difTotal) : "—"}</td>
+              </tr>
+            ))}
+            <tr className="border-t border-ragga-blue/15 font-semibold text-ragga-blue-dark">
+              <td className="py-1.5 pr-3">Total da loja</td>
+              <td colSpan={3} />
+              <td className="px-2">{formatadorMoeda.format(total)}</td>
+              <td colSpan={2} />
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -1,18 +1,20 @@
 "use client";
 
-import { Fragment, useState, useTransition, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { SemaforoBadge } from "@/components/ui/SemaforoBadge";
 import { paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import { HistoricoMensalExpandido } from "./HistoricoMensalExpandido";
+import { UNIDADES } from "@painel/shared";
+import type { CorSemaforo } from "@/lib/rules/semaforos";
+import type { VisaoGeralData, MesAnteriorVisaoGeral, IndicadorComSemaforo, IndicadorBrindes, IndicadorSimples, LinhaDetalhamentoLoja } from "@/lib/services/visaoGeral";
+import type { FormaPagamentoBuckets } from "@/lib/services/fechamentoWhatsapp";
+import { calcularPontosAtencao, compararCriticidade, contarCriticidade } from "@/lib/rules/prioridades";
+import { buscarVisaoGeralPorPeriodo } from "@/lib/actions/buscarVisaoGeralPorPeriodo";
 import { DesempenhoCaixa } from "./DesempenhoCaixa";
 import type { DesempenhoCaixaData, IndicadorDesempenhoId } from "@/lib/services/desempenhoCaixa";
 import { buscarDesempenhoCaixa } from "@/lib/actions/buscarDesempenhoCaixa";
-import { UNIDADES } from "@painel/shared";
-import type { CorSemaforo } from "@/lib/rules/semaforos";
-import type { VisaoGeralData, IndicadorComSemaforo, IndicadorSimples } from "@/lib/services/visaoGeral";
-import { buscarVisaoGeralPorPeriodo } from "@/lib/actions/buscarVisaoGeralPorPeriodo";
 
 // timeZone: "UTC" — `dataReferencia` é uma data "pura" (meia-noite UTC); sem fixar o fuso,
 // a formatação usa o fuso local do servidor/navegador e pode exibir o dia anterior (bug real
@@ -179,7 +181,6 @@ function IndicadorVisaoGeral({
   indisponivelTexto,
   insight,
   modoPeriodo,
-  href,
 }: {
   titulo: string;
   icone: NomeIcone;
@@ -187,14 +188,10 @@ function IndicadorVisaoGeral({
   indisponivelTexto: string;
   insight?: string;
   modoPeriodo?: boolean;
-  /** Abre o ranking por loja deste indicador (central de indicadores). */
-  href?: string;
 }) {
   const larguraBarra = dados.disponivel && dados.percentualFaturamento !== undefined ? Math.min(100, dados.percentualFaturamento * 10) : 0;
-  const classesCard =
-    "group relative block overflow-hidden rounded-xl border border-ragga-blue/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ragga-blue";
-  const corpo = (
-    <>
+  return (
+    <div className="group relative overflow-hidden rounded-xl border border-ragga-blue/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-start justify-between">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ragga-blue-dark text-white">
           <Icone nome={icone} className="h-4 w-4" />
@@ -207,7 +204,7 @@ function IndicadorVisaoGeral({
       </p>
       {dados.disponivel ? (
         <>
-          <p className="mt-1 text-[clamp(1.5rem,2.4vw,2.25rem)] font-extrabold leading-none tracking-tight text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
+          <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">{formatadorMoeda.format(dados.valor ?? 0)}</p>
           <div className="mt-2 flex items-center justify-between text-xs text-foreground/50">
             <span>{dados.percentualFaturamento !== undefined && `${formatadorPercentual.format(dados.percentualFaturamento)}% do faturamento`}</span>
             {/* No modo período o `dataRegistro` é só o fim do intervalo — mostrar aqui
@@ -227,37 +224,299 @@ function IndicadorVisaoGeral({
           <p className="mt-2 text-xs text-foreground/45">{indisponivelTexto}</p>
         </>
       )}
-      {href && <p className="mt-2 text-xs font-medium text-ragga-blue opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">Ver ranking por loja →</p>}
-    </>
-  );
-  return href ? (
-    <Link href={href} className={classesCard}>
-      {corpo}
-    </Link>
-  ) : (
-    <div className={classesCard}>{corpo}</div>
+    </div>
   );
 }
 
 /**
- * Card de Controles de Caixa — mesma família visual do card acima, tom
- * "operacional" (ícone em contorno em vez de preenchido, sem semáforo/
- * percentual — só ícone + valor + "Último registro"). Nenhum valor/regra
- * de data é calculado aqui, só apresentação.
+ * Comparativo mensal ao clicar no card (popover compacto). Só apresentação: os
+ * valores vêm de `dados` (período atual) e `dados.mesAnterior` (mês calendário
+ * anterior, mesma Loja) calculados em `visaoGeral.ts`. Cada popover é uma lista
+ * de blocos (ex.: Faturamento + o indicador, ou só a métrica do Controle de
+ * Caixa). Tendência apenas ↑/↓ — sem julgar "bom/ruim"; a criticidade segue só
+ * nos thresholds existentes. Sem dado em um dos meses: "Sem dados" (nunca zero).
  */
-function ControleCard({
-  titulo,
-  icone,
-  disponivel,
-  valor,
-  dataRegistro,
-}: {
-  titulo: string;
-  icone: NomeIcone;
+const formatadorMesAno = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+
+function rotuloMes(data: Date): string {
+  const [mes, ano] = formatadorMesAno.format(data).split(" de ");
+  return `${mes.charAt(0).toUpperCase()}${mes.slice(1)}/${ano}`;
+}
+
+interface DadoComparativo {
   disponivel: boolean;
-  valor?: string;
-  dataRegistro?: Date;
+  valor?: number;
+  /** % do faturamento (indicadores); ausente quando não se aplica. */
+  percentual?: number;
+}
+
+type FormatoComparativo = "moeda" | "caixas" | "divergencias" | "percentual";
+
+interface BlocoComparativo {
+  titulo?: string;
+  atual: DadoComparativo;
+  anterior: DadoComparativo;
+  formato: FormatoComparativo;
+}
+
+function formatarValor(formato: FormatoComparativo, n: number): string {
+  switch (formato) {
+    case "moeda":
+      return formatadorMoeda.format(n);
+    case "caixas":
+      return `${n} caixas`;
+    case "divergencias":
+      return `${n} divergência(s)`;
+    case "percentual":
+      return `${formatadorPercentual.format(n)}%`;
+  }
+}
+
+function formatarVariacao(formato: FormatoComparativo, delta: number, anterior: number): string {
+  const sinal = delta < 0 ? "-" : "+";
+  const abs = Math.abs(delta);
+  switch (formato) {
+    case "moeda": {
+      const pct = anterior !== 0 ? ` (${sinal || "+"}${formatadorPercentual.format(Math.abs((delta / anterior) * 100))}%)` : "";
+      return `${formatadorMoeda.format(abs)}${pct}`;
+    }
+    case "caixas":
+      return `${abs} caixas`;
+    case "divergencias":
+      return `${abs} divergência(s)`;
+    case "percentual":
+      return `${formatadorPercentual.format(abs)} p.p.`;
+  }
+}
+
+function LinhaComparativo({ rotulo, dado, formato }: { rotulo: string; dado: DadoComparativo; formato: FormatoComparativo }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-foreground/60">{rotulo}</span>
+      {dado.disponivel && dado.valor !== undefined ? (
+        <span className="text-right font-semibold tabular-nums text-ragga-blue-dark">
+          {formatarValor(formato, dado.valor)}
+          {dado.percentual !== undefined && (
+            <span className="block text-xs font-normal text-foreground/50">{formatadorPercentual.format(dado.percentual)}% do faturamento</span>
+          )}
+        </span>
+      ) : (
+        <span className="text-right text-foreground/40">Sem dados</span>
+      )}
+    </div>
+  );
+}
+
+function BlocoComparativoView({ bloco, nomeAnterior, nomeAtual }: { bloco: BlocoComparativo; nomeAnterior: string; nomeAtual: string }) {
+  const { atual, anterior, formato } = bloco;
+  const comparavel = atual.disponivel && anterior.disponivel && atual.valor !== undefined && anterior.valor !== undefined;
+  const delta = comparavel ? (atual.valor as number) - (anterior.valor as number) : null;
+  const seta = delta === null ? "" : delta > 0 ? "↑" : delta < 0 ? "↓" : "=";
+  return (
+    <div className="space-y-1.5">
+      {bloco.titulo && <p className="text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">{bloco.titulo}</p>}
+      <LinhaComparativo rotulo={nomeAnterior} dado={anterior} formato={formato} />
+      <LinhaComparativo rotulo={nomeAtual} dado={atual} formato={formato} />
+      <div className="flex items-baseline justify-between gap-3 border-t border-ragga-blue/10 pt-1.5">
+        <span className="text-foreground/60">Variação</span>
+        {delta === null ? (
+          <span className="text-foreground/40">—</span>
+        ) : (
+          <span className="text-right font-bold tabular-nums text-ragga-blue-dark">
+            {seta} {formatarVariacao(formato, delta, anterior.valor as number)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ComparativoPopover({
+  children,
+  titulo,
+  blocos,
+  mesAtual,
+  mesAnterior,
+  nota,
+  href,
+  alinharDireita = false,
+}: {
+  children: ReactNode;
+  titulo: string;
+  blocos: BlocoComparativo[];
+  mesAtual: Date;
+  /** Link opcional para o ranking por loja / plano de ação do indicador (Indicadores). */
+  href?: string;
+  /** `null` = período selecionado não é um mês calendário completo. */
+  mesAnterior: Date | null;
+  nota?: string;
+  alinharDireita?: boolean;
 }) {
+  const [aberto, setAberto] = useState(false);
+  const raiz = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!aberto) return;
+    function fora(e: MouseEvent) {
+      if (raiz.current && !raiz.current.contains(e.target as Node)) setAberto(false);
+    }
+    function esc(e: KeyboardEvent) {
+      if (e.key === "Escape") setAberto(false);
+    }
+    document.addEventListener("mousedown", fora);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fora);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [aberto]);
+
+  return (
+    <div ref={raiz} className="relative">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={aberto}
+        title="Clique para ver o comparativo com o mês anterior"
+        onClick={() => setAberto((a) => !a)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setAberto((a) => !a);
+          }
+        }}
+        className="cursor-pointer rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ragga-blue/40"
+      >
+        {children}
+      </div>
+      {aberto && (
+        <div
+          role="dialog"
+          aria-label={`Comparativo — ${titulo}`}
+          className={`absolute top-full z-30 mt-2 w-72 rounded-xl border border-ragga-blue/15 bg-white p-4 text-sm shadow-[0_12px_32px_-8px_rgba(31,53,112,0.35)] ${
+            alinharDireita ? "right-0" : "left-0"
+          }`}
+        >
+          <p className="text-[11px] font-bold uppercase tracking-wide text-ragga-blue">
+            Comparativo — {mesAnterior ? rotuloMes(mesAnterior) : "mês anterior"}
+          </p>
+          <p className="mt-0.5 text-xs text-foreground/50">{titulo}</p>
+          {mesAnterior === null ? (
+            <p className="mt-3 text-xs text-foreground/60">Comparativo mensal disponível para períodos mensais completos.</p>
+          ) : (
+            <div className="mt-3 space-y-3">
+              {blocos.map((b, i) => (
+                <BlocoComparativoView
+                  key={`${b.titulo ?? "unico"}-${i}`}
+                  bloco={b}
+                  nomeAnterior={rotuloMes(mesAnterior).split("/")[0]}
+                  nomeAtual={rotuloMes(mesAtual).split("/")[0]}
+                />
+              ))}
+              {nota && <p className="text-[11px] text-foreground/45">{nota}</p>}
+            </div>
+          )}
+          {href && (
+            <Link href={href} className="mt-3 block text-xs font-semibold text-ragga-blue hover:underline">
+              Abrir ranking por loja e plano de ação →
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Card de Brindes: semáforo/percentual referem-se SOMENTE aos brindes
+ * CONTROLÁVEIS (regra em `lib/rules/brindes.ts`); mostra também o total
+ * geral e os não controláveis, com a composição em "Ver composição".
+ */
+function ListaComposicao({ itens }: { itens: { rotulo: string; valor: number }[] }) {
+  if (itens.length === 0) return <p className="text-foreground/40">Sem registros</p>;
+  return (
+    <>
+      {itens.map((i) => (
+        <div key={i.rotulo} className="flex justify-between text-foreground/65">
+          <span>{i.rotulo}</span>
+          <span className="tabular-nums">{formatadorMoeda.format(i.valor)}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function BrindesCard({ dados, indisponivelTexto, modoPeriodo }: { dados: IndicadorBrindes; indisponivelTexto: string; modoPeriodo?: boolean }) {
+  const detalhe = dados.detalhe;
+  const larguraBarra = dados.disponivel && dados.percentualFaturamento !== undefined ? Math.min(100, dados.percentualFaturamento * 10) : 0;
+  return (
+    <div className="group relative overflow-hidden rounded-xl border border-ragga-blue/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex items-start justify-between">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ragga-blue-dark text-white">
+          <Icone nome="brinde" className="h-4 w-4" />
+        </span>
+        {dados.disponivel && dados.semaforo && <SemaforoBadge cor={dados.semaforo} texto={TEXTO_SEMAFORO[dados.semaforo]} />}
+      </div>
+      <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-foreground/45">
+        Brindes controláveis
+        <InfoInsight texto="A criticidade de Brindes considera somente os brindes controláveis pela loja (ex.: Presente, Taxa Extra). Aniversariante, Consumo de Funcionários e Empresas Parceiras não entram no semáforo, mas continuam no total e na composição." />
+      </p>
+      {dados.disponivel && detalhe ? (
+        <>
+          <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">{formatadorMoeda.format(detalhe.controlaveis)}</p>
+          <p className="mt-2 text-xs text-foreground/50">
+            {dados.percentualFaturamento !== undefined && `${formatadorPercentual.format(dados.percentualFaturamento)}% do faturamento (controláveis)`}
+          </p>
+          <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-ragga-bg">
+            <div
+              className={`h-full rounded-full ${dados.semaforo ? ACENTO_POR_SEMAFORO[dados.semaforo] : "bg-ragga-blue/30"}`}
+              style={{ width: `${larguraBarra}%` }}
+            />
+          </div>
+          <dl className="mt-3 space-y-0.5 text-xs text-foreground/60">
+            <div className="flex justify-between">
+              <dt>Total de brindes</dt>
+              <dd className="tabular-nums">{formatadorMoeda.format(detalhe.total)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt>Controláveis</dt>
+              <dd className="tabular-nums">{formatadorMoeda.format(detalhe.controlaveis)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt>Não controláveis</dt>
+              <dd className="tabular-nums">{formatadorMoeda.format(detalhe.naoControlaveis)}</dd>
+            </div>
+          </dl>
+          <details className="mt-2 text-xs">
+            <summary className="cursor-pointer font-semibold text-ragga-blue">Ver composição</summary>
+            <div className="mt-2 space-y-2">
+              <div>
+                <p className="font-semibold uppercase tracking-wide text-foreground/45">Não controláveis</p>
+                <ListaComposicao itens={detalhe.composicaoNaoControlaveis} />
+              </div>
+              <div>
+                <p className="font-semibold uppercase tracking-wide text-foreground/45">Controláveis</p>
+                <ListaComposicao itens={detalhe.composicaoControlaveis} />
+              </div>
+            </div>
+          </details>
+          {!modoPeriodo && dados.dataRegistro && <p className="mt-2 text-[11px] text-foreground/35">{formatadorDataRegistro.format(dados.dataRegistro)}</p>}
+        </>
+      ) : (
+        <>
+          <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-foreground/20">—</p>
+          <p className="mt-2 text-xs text-foreground/45">{indisponivelTexto}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Card de Controles de Caixa — mesma família visual, tom "operacional".
+ * Mostra o valor do período selecionado; sem registro: "Sem dados no período".
+ */
+function ControleCard({ titulo, icone, disponivel, valor }: { titulo: string; icone: NomeIcone; disponivel: boolean; valor?: string }) {
   return (
     <div className="rounded-xl border border-ragga-blue-dark/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ragga-blue-dark/15 text-ragga-blue-dark">
@@ -265,14 +524,11 @@ function ControleCard({
       </span>
       <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-foreground/45">{titulo}</p>
       {disponivel ? (
-        <>
-          <p className="mt-1 text-lg font-bold text-ragga-blue-dark">{valor}</p>
-          {dataRegistro && <p className="mt-1.5 text-[11px] text-foreground/40">Último registro: {formatadorDataRegistro.format(dataRegistro)}</p>}
-        </>
+        <p className="mt-1 text-lg font-bold text-ragga-blue-dark">{valor}</p>
       ) : (
         <>
           <p className="mt-1 text-lg font-bold text-foreground/20">—</p>
-          <p className="mt-1.5 text-xs text-foreground/45">Sem dados</p>
+          <p className="mt-1.5 text-xs text-foreground/45">Sem dados no período</p>
         </>
       )}
     </div>
@@ -319,23 +575,29 @@ export function VisaoGeralView({
   dadosIniciais,
   dataInicial,
   dataFimInicial,
-  desempenhoInicial,
+  desempenhoInicial = null,
 }: {
   dadosIniciais: VisaoGeralData;
   dataInicial: Date;
   dataFimInicial?: Date;
-  desempenhoInicial: DesempenhoCaixaData | null;
+  desempenhoInicial?: DesempenhoCaixaData | null;
 }) {
   const [dados, setDados] = useState(dadosIniciais);
-  const [desempenho, setDesempenho] = useState(desempenhoInicial);
   // Filtro de Período (item 2 desta etapa): "data única" é só o caso `dataInicioSel ===
   // dataFimSel` — mesmo padrão inicial de sempre (as duas começam na mesma data), extensão
   // da lógica existente, não um filtro paralelo.
   const [dataInicioSel, setDataInicioSel] = useState(() => paraInputDate(dataInicial));
   const [dataFimSel, setDataFimSel] = useState(() => paraInputDate(dataFimInicial ?? dataInicial));
+  const [desempenho, setDesempenho] = useState(desempenhoInicial);
   const [pendente, iniciarTransicao] = useTransition();
   const [lojasExpandidas, setLojasExpandidas] = useState<Set<string>>(new Set());
   const [lojaFiltro, setLojaFiltro] = useState<string>("TODAS");
+  const [ordem, setOrdem] = useState<"loja" | "valor" | "percentual" | "criticidade">("loja");
+  const [colunaOrdem, setColunaOrdem] = useState<"faturamento" | "retiradaCompraDireta" | "brindes" | "cancelamentoSalao" | "cancelamentoDelivery">("faturamento");
+  const [dirDesc, setDirDesc] = useState(false);
+  const [pontosAbertos, setPontosAbertos] = useState<Set<string>>(new Set());
+  // Guard contra resposta fora de ordem: só a última requisição disparada atualiza a tela.
+  const ultimaRequisicao = useRef(0);
 
   function alternarLoja(unidade: string) {
     setLojasExpandidas((atual) => {
@@ -346,16 +608,33 @@ export function VisaoGeralView({
     });
   }
 
+  function alternarPonto(unidade: string) {
+    setPontosAbertos((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(unidade)) proximo.delete(unidade);
+      else proximo.add(unidade);
+      return proximo;
+    });
+  }
+
   function alterarPeriodo(novoInicio: string, novoFim: string) {
     setDataInicioSel(novoInicio);
     setDataFimSel(novoFim);
+    // Digitar no campo de data gera valores intermediários (ex.: ano 0002, ou início > fim).
+    // Consultá-los devolveria "sem dados" e a resposta poderia chegar depois da correta —
+    // só consulta quando as duas datas estão completas (ano com 4 dígitos) e em ordem.
+    const completa = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && Number(v.slice(0, 4)) >= 2000;
+    if (!completa(novoInicio) || !completa(novoFim) || novoInicio > novoFim) return;
+    const requisicao = ++ultimaRequisicao.current;
     iniciarTransicao(async () => {
       const [resultado, resultadoDesempenho] = await Promise.all([
         buscarVisaoGeralPorPeriodo(dataDoInput(novoInicio), dataDoInput(novoFim)),
         buscarDesempenhoCaixa(dataDoInput(novoInicio), dataDoInput(novoFim)),
       ]);
-      setDados(resultado);
-      setDesempenho(resultadoDesempenho);
+      if (requisicao === ultimaRequisicao.current) {
+        setDados(resultado);
+        setDesempenho(resultadoDesempenho);
+      }
     });
   }
 
@@ -372,37 +651,172 @@ export function VisaoGeralView({
   const indisponivelLoja: IndicadorComSemaforo = { disponivel: false };
   const indisponivelSimples: IndicadorSimples = { disponivel: false };
 
-  const cardsExibidos =
-    lojaFiltro === "TODAS"
-      ? {
-          faturamento: dados.faturamento as IndicadorSimples,
-          brindes: dados.brindes,
-          cancelamentoSalao: dados.cancelamentoSalao,
-          cancelamentoDelivery: dados.cancelamentoDelivery,
-          retiradaCompraDireta: dados.retiradaCompraDireta,
-        }
-      : {
-          faturamento: linhaLojaFiltro?.faturamento ?? indisponivelSimples,
-          brindes: linhaLojaFiltro?.brindes ?? indisponivelLoja,
-          cancelamentoSalao: linhaLojaFiltro?.cancelamentoSalao ?? indisponivelLoja,
-          cancelamentoDelivery: linhaLojaFiltro?.cancelamentoDelivery ?? indisponivelLoja,
-          retiradaCompraDireta: linhaLojaFiltro?.retiradaCompraDireta ?? indisponivelLoja,
-        };
+  // Seleciona os cards conforme a Loja filtrada; usada para o mês atual E para o mês anterior
+  // (o filtro de Loja é aplicado igualmente aos dois períodos no comparativo).
+  function cardsDe(d: Pick<MesAnteriorVisaoGeral, "faturamento" | "brindes" | "cancelamentoSalao" | "cancelamentoDelivery" | "retiradaCompraDireta" | "detalhamentoPorLoja">) {
+    if (lojaFiltro === "TODAS") {
+      return {
+        faturamento: d.faturamento as IndicadorSimples,
+        brindes: d.brindes,
+        cancelamentoSalao: d.cancelamentoSalao,
+        cancelamentoDelivery: d.cancelamentoDelivery,
+        retiradaCompraDireta: d.retiradaCompraDireta,
+      };
+    }
+    const linha = d.detalhamentoPorLoja.find((l) => l.unidade === lojaFiltro);
+    return {
+      faturamento: linha?.faturamento ?? indisponivelSimples,
+      brindes: (linha?.brindes ?? indisponivelLoja) as IndicadorBrindes,
+      cancelamentoSalao: linha?.cancelamentoSalao ?? indisponivelLoja,
+      cancelamentoDelivery: linha?.cancelamentoDelivery ?? indisponivelLoja,
+      retiradaCompraDireta: linha?.retiradaCompraDireta ?? indisponivelLoja,
+    };
+  }
+  const cardsExibidos = cardsDe(dados);
+  const cardsAnterior = dados.mesAnterior ? cardsDe(dados.mesAnterior) : null;
 
-  const detalhamentoExibido = lojaFiltro === "TODAS" ? dados.detalhamentoPorLoja : linhaLojaFiltro ? [linhaLojaFiltro] : [];
+  // --- Comparativo mensal (popover): sempre a MESMA Loja e os mesmos períodos nos dois meses ---
+  const dc = (x: { disponivel: boolean; valor?: number; percentualFaturamento?: number }): DadoComparativo => ({
+    disponivel: x.disponivel,
+    valor: x.valor,
+    percentual: x.percentualFaturamento,
+  });
+  const semDados: DadoComparativo = { disponivel: false };
+  const mesAnteriorData = dados.mesAnterior?.dataInicio ?? null;
 
-  // Link para a central de indicadores: Indicadores aplica D-1 sobre a data de referência,
-  // então enviamos o dia seguinte para abrir exatamente o mesmo dia mostrado no card.
+  function popover(titulo: string, blocos: BlocoComparativo[], no: ReactNode, alinharDireita = false, nota?: string, href?: string) {
+    return (
+      <ComparativoPopover
+        titulo={lojaFiltro === "TODAS" ? titulo : `${titulo} · ${lojaFiltro}`}
+        blocos={blocos}
+        mesAtual={dados.dataFim}
+        mesAnterior={mesAnteriorData}
+        alinharDireita={alinharDireita}
+        nota={nota}
+        href={href}
+      >
+        {no}
+      </ComparativoPopover>
+    );
+  }
+
+  const blocoFaturamento = (titulo?: string): BlocoComparativo => ({
+    titulo,
+    atual: dc(cardsExibidos.faturamento),
+    anterior: cardsAnterior ? dc(cardsAnterior.faturamento) : semDados,
+    formato: "moeda",
+  });
+
+  /** Card de indicador/faturamento: bloco do Faturamento (exceto no próprio card de Faturamento) + bloco do indicador. */
+  function comparativo(titulo: string, escolher: (c: typeof cardsExibidos) => IndicadorSimples | IndicadorComSemaforo, no: ReactNode, alinharDireita = false, href?: string) {
+    const ehFaturamento = escolher(cardsExibidos) === cardsExibidos.faturamento;
+    const bloco: BlocoComparativo = {
+      titulo: ehFaturamento ? undefined : titulo,
+      atual: dc(escolher(cardsExibidos)),
+      anterior: cardsAnterior ? dc(escolher(cardsAnterior)) : semDados,
+      formato: "moeda",
+    };
+    return popover(titulo, ehFaturamento ? [bloco] : [blocoFaturamento("Faturamento"), bloco], no, alinharDireita, undefined, href);
+  }
+
+  // Navegação para Indicadores (Central de Caixa): a aba aplica D-1 sobre a data de referência, então enviamos o
+  // dia seguinte para abrir exatamente o mesmo período mostrado nos cards.
   const diaSeguinte = (valor: string) => paraInputDate(new Date(dataDoInput(valor).getTime() + 86_400_000));
-  const hrefIndicador = (fonte: string) =>
-    `/indicadores?fonte=${fonte}&inicio=${diaSeguinte(dataInicioSel)}&fim=${diaSeguinte(dataFimSel)}${lojaFiltro !== "TODAS" ? `&loja=${encodeURIComponent(lojaFiltro)}` : ""}`;
-
+  const parametrosNavegacao = (fonte: string) =>
+    `fonte=${fonte}&inicio=${diaSeguinte(dataInicioSel)}&fim=${diaSeguinte(dataFimSel)}${lojaFiltro !== "TODAS" ? `&loja=${encodeURIComponent(lojaFiltro)}` : ""}`;
+  const hrefIndicador = (fonte: string) => `/indicadores?${parametrosNavegacao(fonte)}`;
+  // Compra Direta vive em Retiradas (sub-aba "Retirada Compra Direta"): mesmo padrão de parâmetros (fonte/inicio/fim/loja).
+  const hrefCompraDireta = `/retiradas?${parametrosNavegacao("compraDireta")}`;
   const hrefPlanoAcao = (id: IndicadorDesempenhoId, loja?: string): string | null => {
-    if (id === "consumoFuncionarios") return null;
-    if (id === "compraDireta") return "/retiradas";
-    const base = hrefIndicador(id === "brindes" ? "brindes" : id);
+    const base = id === "compraDireta" ? hrefCompraDireta : hrefIndicador(id);
     return loja ? `${base}&loja=${encodeURIComponent(loja)}` : base;
   };
+
+  // Formas de Pagamento, Retirada p/ Depósito e Quebra de Caixa acompanham a Loja filtrada
+  // (mesmo período) — usam o agrupamento por loja devolvido pela mesma consulta do serviço.
+  const formasExibidas: FormaPagamentoBuckets | undefined =
+    lojaFiltro === "TODAS" ? dados.formasPagamento.buckets : dados.formasPagamento.porLoja?.[lojaFiltro];
+  function depositoDe(d: Pick<VisaoGeralData, "retiradaDeposito">): { disponivel: boolean; valor?: number } {
+    return lojaFiltro === "TODAS"
+      ? { disponivel: d.retiradaDeposito.disponivel, valor: d.retiradaDeposito.valorDia }
+      : { disponivel: d.retiradaDeposito.disponivel, valor: d.retiradaDeposito.porLoja?.[lojaFiltro] ?? 0 };
+  }
+  function quebraDe(d: Pick<VisaoGeralData, "quebraCaixa">): { disponivel: boolean; valor?: number } {
+    if (lojaFiltro === "TODAS") return { disponivel: d.quebraCaixa.disponivel, valor: d.quebraCaixa.total };
+    const v = d.quebraCaixa.porLoja?.[lojaFiltro];
+    return v !== undefined ? { disponivel: true, valor: v } : { disponivel: false };
+  }
+  const retiradaDepositoExibida = depositoDe(dados);
+  const quebraExibida = quebraDe(dados);
+
+  /** Controles de Caixa: métrica principal do card, mês atual × mês anterior (dados reais; "Sem dados" quando ausente). */
+  const notaRede = lojaFiltro !== "TODAS" ? "Consolidado da rede (esta base não tem quebra por loja nesta tela)." : undefined;
+  const ant = dados.mesAnterior;
+  /** Aviso quando a base só passa a ter dados no meio do mês anterior (comparação parcial). */
+  function notaCobertura(chave: keyof NonNullable<typeof ant>["coberturaDesde"], comRede = false): string | undefined {
+    const desde = ant?.coberturaDesde[chave];
+    const parcial =
+      ant && desde && desde.getTime() > ant.dataInicio.getTime() && desde.getTime() <= ant.dataFim.getTime()
+        ? `Base com dados a partir de ${formatadorDataRegistro.format(desde)} — ${rotuloMes(ant.dataInicio).split("/")[0]} parcial.`
+        : undefined;
+    return [parcial, comRede ? notaRede : undefined].filter(Boolean).join(" ") || undefined;
+  }
+  const blocosControle = {
+    fechamento: [
+      {
+        atual: { disponivel: dados.fechamento.disponivel, valor: dados.fechamento.totalCaixasOperados },
+        anterior: ant ? { disponivel: ant.fechamento.disponivel, valor: ant.fechamento.totalCaixasOperados } : semDados,
+        formato: "caixas",
+      },
+    ] as BlocoComparativo[],
+    pdv: [
+      {
+        atual: { disponivel: dados.pdvMaquininha.disponivel, valor: dados.pdvMaquininha.diferenca },
+        anterior: ant ? { disponivel: ant.pdvMaquininha.disponivel, valor: ant.pdvMaquininha.diferenca } : semDados,
+        formato: "moeda",
+      },
+    ] as BlocoComparativo[],
+    troco: [
+      {
+        atual: { disponivel: dados.troco.disponivel, valor: dados.troco.divergencias },
+        anterior: ant ? { disponivel: ant.troco.disponivel, valor: ant.troco.divergencias } : semDados,
+        formato: "divergencias",
+      },
+    ] as BlocoComparativo[],
+    conferencia: [
+      {
+        atual: { disponivel: dados.conferencia.disponivel, valor: dados.conferencia.percentualConferido },
+        anterior: ant ? { disponivel: ant.conferencia.disponivel, valor: ant.conferencia.percentualConferido } : semDados,
+        formato: "percentual",
+      },
+    ] as BlocoComparativo[],
+    quebra: [
+      {
+        atual: quebraExibida,
+        anterior: ant ? quebraDe(ant) : semDados,
+        formato: "moeda",
+      },
+    ] as BlocoComparativo[],
+  };
+
+  const detalhamentoFiltrado: LinhaDetalhamentoLoja[] =
+    lojaFiltro === "TODAS" ? dados.detalhamentoPorLoja : linhaLojaFiltro ? [linhaLojaFiltro] : [];
+
+  const detalhamentoExibido = [...detalhamentoFiltrado].sort((a, b) => {
+    if (ordem === "criticidade") return compararCriticidade(a, b);
+    if (ordem === "loja") return (dirDesc ? -1 : 1) * a.unidade.localeCompare(b.unidade);
+    const va = ordem === "valor" ? a[colunaOrdem].valor : (a[colunaOrdem] as IndicadorComSemaforo).percentualFaturamento;
+    const vb = ordem === "valor" ? b[colunaOrdem].valor : (b[colunaOrdem] as IndicadorComSemaforo).percentualFaturamento;
+    if (va === undefined && vb === undefined) return a.unidade.localeCompare(b.unidade);
+    if (va === undefined) return 1;
+    if (vb === undefined) return -1;
+    return (dirDesc ? vb - va : va - vb) || a.unidade.localeCompare(b.unidade);
+  });
+
+  // Pontos de Atenção: TOP 5 LOJAS (cada unidade independente) sobre as linhas visíveis (respeita Loja).
+  const pontosAtencao = calcularPontosAtencao(detalhamentoFiltrado, 5);
+  // Base do percentual das Formas de Pagamento: faturamento bruto do mesmo período/loja do hero.
+  const faturamentoBase = cardsExibidos.faturamento.disponivel ? (cardsExibidos.faturamento.valor ?? 0) : 0;
 
   const textoIndisponivel = dados.conectado ? "Sem dados disponíveis" : "Sem dados para esta referência";
   const textoPeriodo = dados.modoPeriodo
@@ -485,18 +899,13 @@ export function VisaoGeralView({
         </div>
       )}
 
-      <DesempenhoCaixa
-        dados={desempenho}
-        carregando={pendente}
-        loja={lojaFiltro}
-        conferencia={dados.conferencia}
-        hrefIndicador={hrefPlanoAcao}
-        hrefConferencia="/controles-caixa"
-      />
-
       {/* KPI PRINCIPAL — Faturamento (item 6): largura total, gradiente da identidade,
           elemento gráfico abstrato discreto (linhas diagonais em baixa opacidade), sem
           exagero. Nenhum dado/cálculo novo, só apresentação. */}
+      {comparativo(
+        "Faturamento Bruto",
+        (c) => c.faturamento,
+        (
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-ragga-blue via-ragga-blue to-ragga-blue-dark px-5 py-4 text-white shadow-[0_8px_24px_-8px_rgba(31,53,112,0.45)]">
         <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-[0.07]" preserveAspectRatio="none" aria-hidden="true">
           <defs>
@@ -554,28 +963,25 @@ export function VisaoGeralView({
           </>
         )}
       </div>
+        )
+      )}
 
-      <details className="group">
-        <summary className="cursor-pointer select-none rounded-xl border border-ragga-blue/10 bg-white px-4 py-3 text-[13px] font-bold uppercase tracking-wide text-ragga-blue-dark">
-          Formas de pagamento <span className="font-normal normal-case tracking-normal text-foreground/50">(clique para ver a composição)</span>
-        </summary>
-        <div className="mt-3">
-      {/* FORMAS DE PAGAMENTO — composição financeira (item 8). */}
+      {/* FORMAS DE PAGAMENTO — composição do faturamento; mesmo período e MESMA Loja do card acima. */}
       <Secao
         titulo="Formas de Pagamento"
         insight="O prazo de recebimento varia conforme a forma de pagamento: PIX imediato; crédito e débito D+1; voucher D+30; venda a prazo mensal; online/iFood às quartas-feiras."
       >
-        {dados.formasPagamento.disponivel && dados.formasPagamento.buckets ? (
+        {formasExibidas ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {(
               [
-                ["Crédito", dados.formasPagamento.buckets.credito, "credito"],
-                ["Débito", dados.formasPagamento.buckets.debito, "debito"],
-                ["PIX", dados.formasPagamento.buckets.pix, "pix"],
-                ["Voucher", dados.formasPagamento.buckets.voucher, "voucher"],
-                ["Venda a Prazo", dados.formasPagamento.buckets.vendaAPrazo, "prazo"],
-                ["Online", dados.formasPagamento.buckets.online, "online"],
-                ["Dinheiro", dados.formasPagamento.buckets.dinheiro, "dinheiro"],
+                ["Crédito", formasExibidas.credito, "credito"],
+                ["Débito", formasExibidas.debito, "debito"],
+                ["PIX", formasExibidas.pix, "pix"],
+                ["Voucher", formasExibidas.voucher, "voucher"],
+                ["Venda a Prazo", formasExibidas.vendaAPrazo, "prazo"],
+                ["Online", formasExibidas.online, "online"],
+                ["Dinheiro", formasExibidas.dinheiro, "dinheiro"],
               ] as [string, number, NomeIcone][]
             ).map(([label, valor, icone]) => (
               <div key={label} className="rounded-lg border border-ragga-blue/10 bg-ragga-bg/50 p-3">
@@ -584,30 +990,171 @@ export function VisaoGeralView({
                 </span>
                 <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-foreground/45">{label}</p>
                 <p className="mt-0.5 text-sm font-bold text-ragga-blue-dark">{formatadorMoeda.format(valor)}</p>
+                {faturamentoBase > 0 && (
+                  <p className="mt-0.5 text-xs text-foreground/50">{formatadorPercentual.format((valor / faturamentoBase) * 100)}% da venda</p>
+                )}
               </div>
             ))}
+            {formasExibidas.outros > 0.005 && (
+              <div className="rounded-lg border border-ragga-blue/10 bg-ragga-bg/50 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground/45">Outros</p>
+                <p className="mt-0.5 text-sm font-bold text-ragga-blue-dark">{formatadorMoeda.format(formasExibidas.outros)}</p>
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-sm text-foreground/45">Sem dados para esta referência</p>
         )}
       </Secao>
 
-        </div>
-      </details>
+      {/* PONTOS DE ATENÇÃO — TOP 5 lojas que concentram indicadores Críticos/Atenção (semáforos já existentes). */}
+      <Secao
+        titulo="Pontos de Atenção"
+        insight="Lojas que concentram mais indicadores em Crítico e Atenção (Brindes controláveis, Cancelamento Salão, Cancelamento Delivery e Compra Direta), usando os semáforos já existentes. Ordem: mais críticos, depois mais em atenção; empate: maior desvio sobre o limite. Detalhes no ranking por loja abaixo."
+      >
+        {pontosAtencao.length === 0 ? (
+          <p className="text-sm text-foreground/50">Nenhuma loja com indicador em Atenção ou Crítico no período.</p>
+        ) : (
+          <ol className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {pontosAtencao.map((p, i) => {
+              const aberto = pontosAbertos.has(p.unidade);
+              return (
+                <li
+                  key={p.unidade}
+                  className={`rounded-lg border-l-4 bg-white shadow-sm ${p.criticos > 0 ? "border-l-semaforo-vermelho" : "border-l-semaforo-amarelo"}`}
+                >
+                  <button
+                    type="button"
+                    aria-expanded={aberto}
+                    onClick={() => alternarPonto(p.unidade)}
+                    className="w-full cursor-pointer px-4 py-3 text-left transition-colors hover:bg-ragga-blue/[0.03]"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-foreground/35">{i + 1}º</span>
+                      <span className="flex-1 text-base font-bold text-ragga-blue-dark">{p.unidade}</span>
+                      <span className="text-ragga-blue/50">{aberto ? "▾" : "▸"}</span>
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-foreground/80">
+                      {p.criticos > 0 && (
+                        <span>
+                          🔴 {p.criticos} {p.criticos === 1 ? "crítico" : "críticos"}
+                        </span>
+                      )}
+                      {p.criticos > 0 && p.atencao > 0 && " · "}
+                      {p.atencao > 0 && <span>🟡 {p.atencao} atenção</span>}
+                    </p>
+                    <p className="mt-0.5 text-xs text-foreground/50">{p.indicadores.map((ind) => ind.rotulo).join(" · ")}</p>
+                  </button>
+                  {aberto && (
+                    <div className="space-y-2 border-t border-ragga-blue/10 px-4 py-3">
+                      {p.indicadores.map((ind) => (
+                        <div key={ind.nome} className="rounded-md bg-ragga-bg/60 px-3 py-2 text-sm">
+                          <p className="text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">{ind.nome}</p>
+                          <p className="mt-0.5 font-semibold tabular-nums text-ragga-blue-dark">{formatadorMoeda.format(ind.valor)}</p>
+                          <p className="text-xs text-foreground/60">{formatadorPercentual.format(ind.percentual)}% do faturamento</p>
+                          <p className="text-xs text-foreground/60">Limite saudável: {formatadorPercentual.format(ind.limite)}%</p>
+                          <p className="text-xs text-foreground/60">
+                            {ind.distanciaPp >= 0 ? "+" : "-"}
+                            {formatadorPercentual.format(Math.abs(ind.distanciaPp))} p.p. {ind.distanciaPp >= 0 ? "acima" : "abaixo"} do limite
+                          </p>
+                          <p className="mt-1 text-xs font-semibold">{ind.semaforo === "vermelho" ? "🔴 Crítico" : "🟡 Atenção"}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </Secao>
 
-      {/* RETIRADAS (item 10) — regra do R$ 0,00 para Retirada Depósito preservada (não
-          alterada nesta etapa, só o visual do card). */}
-      <Secao titulo="Retiradas">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {/* INDICADORES DE PERFORMANCE — Brindes (controláveis), Cancelamentos e Compra Direta. */}
+      <Secao titulo="Indicadores de Performance">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {comparativo("Brindes controláveis", (c) => c.brindes, <BrindesCard dados={cardsExibidos.brindes} indisponivelTexto={textoIndisponivel} modoPeriodo={dados.modoPeriodo} />, false, hrefIndicador("brindes"))}
+          {comparativo(
+            "Cancelamento Salão",
+            (c) => c.cancelamentoSalao,
+            (
           <IndicadorVisaoGeral
-            titulo="Retirada Compra Direta"
+            titulo="Cancelamento Salão"
+            icone="cancelSalao"
+            dados={cardsExibidos.cancelamentoSalao}
+            indisponivelTexto={textoIndisponivel}
+            modoPeriodo={dados.modoPeriodo}
+            insight="Cancelamentos representam vendas canceladas e devem ser analisados conforme o motivo da ocorrência."
+          />
+            ),
+            false,
+            hrefIndicador("cancelamentoSalao")
+          )}
+          {comparativo(
+            "Cancelamento Delivery",
+            (c) => c.cancelamentoDelivery,
+            (
+          <IndicadorVisaoGeral
+            titulo="Cancelamento Delivery"
+            icone="cancelDelivery"
+            dados={cardsExibidos.cancelamentoDelivery}
+            indisponivelTexto={textoIndisponivel}
+            modoPeriodo={dados.modoPeriodo}
+            insight="Cancelamentos representam vendas canceladas e devem ser analisados conforme o motivo da ocorrência."
+          />
+            ),
+            true,
+            hrefIndicador("cancelamentoDelivery")
+          )}
+          {comparativo(
+            "Compra Direta",
+            (c) => c.retiradaCompraDireta,
+            (
+          <IndicadorVisaoGeral
+            titulo="Compra Direta"
             icone="retirada"
             dados={cardsExibidos.retiradaCompraDireta}
             indisponivelTexto={textoIndisponivel}
             modoPeriodo={dados.modoPeriodo}
             insight="Retirada Compra Direta representa valores retirados do caixa para aquisição/compra direta."
           />
-          <div className="group relative overflow-hidden rounded-xl border border-ragga-blue/10 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md">
+            ),
+            true,
+            hrefCompraDireta
+          )}
+        </div>
+      </Secao>
+
+      {/* CENTRAL DE CAIXA (Larissa) — performance contra a meta no mês em andamento, mês equivalente anterior e ranking/plano de
+          ação. Recolhida por padrão: a leitura principal são os "Indicadores de Performance" acima (uma só versão dos cards).
+          Brindes aqui segue a NOSSA regra (somente controláveis). */}
+      <details className="group">
+        <summary className="cursor-pointer select-none rounded-xl border border-ragga-blue/10 bg-white px-4 py-3 text-[13px] font-bold uppercase tracking-wide text-ragga-blue-dark">
+          Central de caixa — performance contra a meta{" "}
+          <span className="font-normal normal-case tracking-normal text-foreground/50">(mesmos dias do mês anterior · ranking e plano de ação)</span>
+        </summary>
+        <div className="mt-3 space-y-5">
+          <DesempenhoCaixa
+            dados={desempenho}
+            carregando={pendente}
+            loja={lojaFiltro}
+            conferencia={dados.conferencia}
+            hrefIndicador={hrefPlanoAcao}
+            hrefConferencia="/controles-caixa"
+          />
+        </div>
+      </details>
+
+      {/* RETIRADA P/ DEPÓSITO e QUEBRA DE CAIXA — acompanham período e Loja. */}
+      <Secao titulo="Retirada p/ Depósito e Quebra de Caixa">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {popover(
+            "Retirada p/ Depósito",
+            [
+              blocoFaturamento("Faturamento"),
+              { titulo: "Retirada p/ Depósito", atual: retiradaDepositoExibida, anterior: ant ? depositoDe(ant) : semDados, formato: "moeda" },
+            ],
+            (
+          <div className="rounded-xl border border-ragga-blue/10 bg-white p-4">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ragga-blue-dark text-white">
               <Icone nome="deposito" className="h-4 w-4" />
             </span>
@@ -615,15 +1162,29 @@ export function VisaoGeralView({
               Retirada p/ Depósito
               <InfoInsight texto="Retirada para depósito é uma movimentação de caixa destinada ao depósito bancário, não uma despesa." />
             </p>
-            {dados.retiradaDeposito.disponivel ? (
+            {retiradaDepositoExibida.disponivel ? (
+              <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">{formatadorMoeda.format(retiradaDepositoExibida.valor ?? 0)}</p>
+            ) : (
               <>
-                <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">
-                  {formatadorMoeda.format(dados.retiradaDeposito.valorDia ?? 0)}
-                </p>
-                {!dados.modoPeriodo && dados.retiradaDeposito.dataRegistro && (
-                  <p className="mt-2 text-xs text-foreground/40">{formatadorDataRegistro.format(dados.retiradaDeposito.dataRegistro)}</p>
-                )}
+                <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-foreground/20">—</p>
+                <p className="mt-2 text-xs text-foreground/45">{textoIndisponivel}</p>
               </>
+            )}
+          </div>
+            ),
+            false,
+            notaCobertura("retiradaDeposito")
+          )}
+          <div className="rounded-xl border border-ragga-blue/10 bg-white p-4">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-ragga-blue-dark text-white">
+              <Icone nome="quebra" className="h-4 w-4" />
+            </span>
+            <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-foreground/45">
+              Quebra de Caixa
+              <InfoInsight texto="Quebra de caixa é a divergência confirmada após a conciliação do caixa." />
+            </p>
+            {quebraExibida.disponivel ? (
+              <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-ragga-blue-dark">{formatadorMoeda.format(quebraExibida.valor ?? 0)}</p>
             ) : (
               <>
                 <p className="mt-1 text-[1.65rem] font-extrabold leading-none text-foreground/20">—</p>
@@ -634,59 +1195,128 @@ export function VisaoGeralView({
         </div>
       </Secao>
 
-      {/* CONTROLES DE CAIXA (item 11) — tom "operacional" para se diferenciar visualmente
-          dos indicadores financeiros acima (item 3: seções distintas do dashboard). */}
+      {/* CONTROLES DE CAIXA — período/data selecionado, sem buscar data anterior. */}
       <Secao
         titulo="Controles de Caixa"
         tom="operacional"
-        insight="Controles de caixa representam conferências/controles operacionais (abertura, fechamento, troco, PDV × maquininha) — não são faturamento."
+        insight="Controles de caixa representam conferências/controles operacionais (abertura, fechamento, troco, PDV × maquininha) — não são faturamento. Mostram exatamente o período selecionado; sem registro no período aparece 'Sem dados'."
         acao={
           <Link href="/controles-caixa" className="text-xs font-semibold text-ragga-blue hover:underline">
             Ver detalhes →
           </Link>
         }
       >
+        {lojaFiltro !== "TODAS" && (
+          <p className="mb-3 text-xs text-foreground/45">Fechamento, PDV × Maquininha, Troco e Conferência são consolidados da rede (sem quebra por loja nesta tela).</p>
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {popover(
+            "Fechamento",
+            blocosControle.fechamento,
+            (
           <ControleCard
             titulo="Fechamento"
             icone="fechamento"
             disponivel={dados.fechamento.disponivel}
             valor={`${dados.fechamento.totalCaixasOperados} caixas operados`}
-            dataRegistro={dados.fechamento.dataRegistro}
           />
-          <ControleCard
-            titulo="PDV × Maquininha"
-            icone="pdv"
-            disponivel={dados.pdvMaquininha.disponivel}
-            valor={formatadorMoeda.format(dados.pdvMaquininha.diferenca ?? 0)}
-            dataRegistro={dados.pdvMaquininha.dataRegistro}
-          />
-          <ControleCard
-            titulo="Troco"
-            icone="troco"
-            disponivel={dados.troco.disponivel}
-            valor={`${dados.troco.divergencias} divergência(s)`}
-            dataRegistro={dados.troco.dataRegistro}
-          />
+            ),
+            false,
+            notaCobertura("fechamento", true)
+          )}
+          {popover(
+            "PDV × Maquininha",
+            blocosControle.pdv,
+            (
+          <ControleCard titulo="PDV × Maquininha" icone="pdv" disponivel={dados.pdvMaquininha.disponivel} valor={formatadorMoeda.format(dados.pdvMaquininha.diferenca ?? 0)} />
+            ),
+            false,
+            notaCobertura("pdvMaquininha", true)
+          )}
+          {popover(
+            "Troco",
+            blocosControle.troco,
+            (
+          <ControleCard titulo="Troco" icone="troco" disponivel={dados.troco.disponivel} valor={`${dados.troco.divergencias} divergência(s)`} />
+            ),
+            false,
+            notaCobertura("troco", true)
+          )}
+          {popover(
+            "Conferência",
+            blocosControle.conferencia,
+            (
           <ControleCard
             titulo="Conferência"
             icone="conferencia"
             disponivel={dados.conferencia.disponivel}
             valor={`${formatadorPercentual.format(dados.conferencia.percentualConferido ?? 0)}% conferido`}
-            dataRegistro={dados.conferencia.dataRegistro}
           />
-          <ControleCard
-            titulo="Quebra de Caixa"
-            icone="quebra"
-            disponivel={dados.quebraCaixa.disponivel}
-            valor={formatadorMoeda.format(dados.quebraCaixa.total ?? 0)}
-            dataRegistro={dados.quebraCaixa.dataRegistro}
-          />
+            ),
+            true,
+            notaCobertura("conferencia", true)
+          )}
+          {popover(
+            "Quebra de Caixa",
+            blocosControle.quebra,
+            (
+          <ControleCard titulo="Quebra de Caixa" icone="quebra" disponivel={quebraExibida.disponivel} valor={formatadorMoeda.format(quebraExibida.valor ?? 0)} />
+            ),
+            true,
+            notaCobertura("quebraCaixa")
+          )}
         </div>
       </Secao>
 
-      {/* DETALHAMENTO POR LOJA (item 12). */}
-      <Secao titulo="Detalhamento por loja">
+      {/* DETALHAMENTO POR LOJA — expansível, com ordenação (Loja / Valor / Percentual / Performance-Criticidade). */}
+      <Secao
+        titulo="Ranking de Performance por Loja"
+        acao={
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-ragga-blue-dark">
+            <label className="flex items-center gap-1.5">
+              Ordenar por
+              <select
+                value={ordem}
+                onChange={(e) => {
+                  const novo = e.target.value as typeof ordem;
+                  setOrdem(novo);
+                  if (novo === "percentual" && colunaOrdem === "faturamento") setColunaOrdem("retiradaCompraDireta");
+                  setDirDesc(novo !== "loja");
+                }}
+                className="rounded-md border border-ragga-blue/15 bg-white px-2 py-1.5 text-xs"
+              >
+                <option value="loja">Loja</option>
+                <option value="valor">Valor</option>
+                <option value="percentual">Percentual</option>
+                <option value="criticidade">Performance / Criticidade</option>
+              </select>
+            </label>
+            {(ordem === "valor" || ordem === "percentual") && (
+              <select
+                value={colunaOrdem}
+                onChange={(e) => setColunaOrdem(e.target.value as typeof colunaOrdem)}
+                className="rounded-md border border-ragga-blue/15 bg-white px-2 py-1.5 text-xs"
+              >
+                {ordem === "valor" && <option value="faturamento">Faturamento</option>}
+                <option value="retiradaCompraDireta">Compra Direta</option>
+                <option value="brindes">Brindes (controláveis)</option>
+                <option value="cancelamentoSalao">Cancel. Salão</option>
+                <option value="cancelamentoDelivery">Cancel. Delivery</option>
+              </select>
+            )}
+            {ordem !== "criticidade" && (
+              <button
+                type="button"
+                onClick={() => setDirDesc((d) => !d)}
+                className="rounded-md border border-ragga-blue/15 bg-white px-2 py-1.5 text-xs hover:bg-ragga-blue/5"
+              >
+                {ordem === "loja" ? (dirDesc ? "Z → A ↓" : "A → Z ↑") : dirDesc ? "Maior → menor ↓" : "Menor → maior ↑"}
+              </button>
+            )}
+            {ordem === "criticidade" && <span className="text-foreground/45">Maior → menor criticidade</span>}
+          </div>
+        }
+      >
         <div className="-mx-5 overflow-x-auto sm:-mx-6">
           <table className="w-full text-sm">
             <thead>
@@ -694,7 +1324,7 @@ export function VisaoGeralView({
                 <th className="px-5 py-2.5 sm:px-6">Loja</th>
                 <th className="px-4 py-2.5">Faturamento</th>
                 <th className="px-4 py-2.5">Retirada Compra Direta</th>
-                <th className="px-4 py-2.5">Brindes</th>
+                <th className="px-4 py-2.5">Brindes (controláveis)</th>
                 <th className="px-4 py-2.5">Cancel. Salão</th>
                 <th className="px-4 py-2.5">Cancel. Delivery</th>
               </tr>
@@ -707,59 +1337,66 @@ export function VisaoGeralView({
                   </td>
                 </tr>
               ) : (
-                detalhamentoExibido.map((linha) => (
-                  <Fragment key={linha.unidade}>
-                    <tr
-                      onClick={() => alternarLoja(linha.unidade)}
-                      className="cursor-pointer border-b border-ragga-blue/5 transition-colors last:border-0 hover:bg-ragga-blue/[0.04]"
-                    >
-                      <td className="px-5 py-3 font-semibold text-ragga-blue-dark sm:px-6">
-                        <span className="mr-1.5 inline-block w-3 text-ragga-blue/45">{lojasExpandidas.has(linha.unidade) ? "▾" : "▸"}</span>
-                        {linha.unidade}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-foreground/80">
-                        {linha.faturamento.valor !== undefined ? formatadorMoeda.format(linha.faturamento.valor) : "—"}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-foreground/80">
-                        {linha.retiradaCompraDireta.valor !== undefined
-                          ? formatadorMoeda.format(linha.retiradaCompraDireta.valor)
-                          : "—"}
-                        <div className="mt-0.5 text-xs">
-                          <CelulaIndicadorLoja indicador={linha.retiradaCompraDireta} />
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-foreground/80">
-                        {linha.brindes.valor !== undefined ? formatadorMoeda.format(linha.brindes.valor) : "—"}
-                        <div className="mt-0.5 text-xs">
-                          <CelulaIndicadorLoja indicador={linha.brindes} />
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-foreground/80">
-                        {linha.cancelamentoSalao.valor !== undefined
-                          ? formatadorMoeda.format(linha.cancelamentoSalao.valor)
-                          : "—"}
-                        <div className="mt-0.5 text-xs">
-                          <CelulaIndicadorLoja indicador={linha.cancelamentoSalao} />
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-foreground/80">
-                        {linha.cancelamentoDelivery.valor !== undefined
-                          ? formatadorMoeda.format(linha.cancelamentoDelivery.valor)
-                          : "—"}
-                        <div className="mt-0.5 text-xs">
-                          <CelulaIndicadorLoja indicador={linha.cancelamentoDelivery} />
-                        </div>
-                      </td>
-                    </tr>
-                    {lojasExpandidas.has(linha.unidade) && (
-                      <tr>
-                        <td colSpan={6} className="bg-ragga-bg/60 px-5 py-3 sm:px-6">
-                          <HistoricoMensalExpandido unidade={linha.unidade} />
+                detalhamentoExibido.map((linha) => {
+                  const crit = contarCriticidade(linha);
+                  return (
+                    <Fragment key={linha.unidade}>
+                      <tr
+                        onClick={() => alternarLoja(linha.unidade)}
+                        className="cursor-pointer border-b border-ragga-blue/5 transition-colors last:border-0 hover:bg-ragga-blue/[0.04]"
+                      >
+                        <td className="px-5 py-3 font-semibold text-ragga-blue-dark sm:px-6">
+                          <span className="mr-1.5 inline-block w-3 text-ragga-blue/45">{lojasExpandidas.has(linha.unidade) ? "▾" : "▸"}</span>
+                          {linha.unidade}
+                          {(crit.criticos > 0 || crit.atencao > 0) && (
+                            <div className="ml-[1.1rem] mt-0.5 text-[11px] font-normal text-foreground/50">
+                              {crit.criticos > 0 && <span className="text-semaforo-vermelho">{crit.criticos} crítico(s)</span>}
+                              {crit.criticos > 0 && crit.atencao > 0 && " · "}
+                              {crit.atencao > 0 && <span className="text-semaforo-amarelo">{crit.atencao} em atenção</span>}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">
+                          {linha.faturamento.valor !== undefined ? formatadorMoeda.format(linha.faturamento.valor) : "—"}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">
+                          {linha.retiradaCompraDireta.valor !== undefined ? formatadorMoeda.format(linha.retiradaCompraDireta.valor) : "—"}
+                          <div className="mt-0.5 text-xs">
+                            <CelulaIndicadorLoja indicador={linha.retiradaCompraDireta} />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">
+                          {linha.brindes.valor !== undefined ? formatadorMoeda.format(linha.brindes.valor) : "—"}
+                          <div className="mt-0.5 text-xs">
+                            <CelulaIndicadorLoja indicador={linha.brindes} />
+                          </div>
+                          {linha.brindes.detalhe && (
+                            <div className="mt-0.5 text-[11px] text-foreground/40">Total {formatadorMoeda.format(linha.brindes.detalhe.total)}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">
+                          {linha.cancelamentoSalao.valor !== undefined ? formatadorMoeda.format(linha.cancelamentoSalao.valor) : "—"}
+                          <div className="mt-0.5 text-xs">
+                            <CelulaIndicadorLoja indicador={linha.cancelamentoSalao} />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">
+                          {linha.cancelamentoDelivery.valor !== undefined ? formatadorMoeda.format(linha.cancelamentoDelivery.valor) : "—"}
+                          <div className="mt-0.5 text-xs">
+                            <CelulaIndicadorLoja indicador={linha.cancelamentoDelivery} />
+                          </div>
                         </td>
                       </tr>
-                    )}
-                  </Fragment>
-                ))
+                      {lojasExpandidas.has(linha.unidade) && (
+                        <tr>
+                          <td colSpan={6} className="bg-ragga-bg/60 px-5 py-3 sm:px-6">
+                            <HistoricoMensalExpandido unidade={linha.unidade} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>

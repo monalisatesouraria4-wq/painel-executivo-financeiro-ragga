@@ -5,19 +5,8 @@ import type { FaixaSemaforo } from "./semaforos";
  * serviço servidor e pela tela.
  */
 
-/** Motivo de brinde que representa consumo de funcionários (separado dos brindes a clientes). */
-export function ehConsumoFuncionarios(motivo: string): boolean {
-  const normalizado = motivo
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toUpperCase();
-  return normalizado.includes("CONSUMO") && normalizado.includes("FUNCION");
-}
-
-/** Balizador aprovado: R$ 10,00 por funcionário por dia; referência da rede = 480 funcionários. */
-export const CONSUMO_VALOR_POR_FUNCIONARIO_DIA = 10;
-export const CONSUMO_FUNCIONARIOS_REDE = 480;
-export const CONSUMO_LIMITE_DIARIO_REDE = CONSUMO_VALOR_POR_FUNCIONARIO_DIA * CONSUMO_FUNCIONARIOS_REDE; // R$ 4.800,00
+// Brindes: a avaliação usa a classificação oficial do painel (`lib/rules/brindes.ts` — controláveis × não
+// controláveis; semáforo só sobre os controláveis). Não há regra paralela de "consumo de funcionários" aqui.
 
 /**
  * Meta em % do faturamento = teto da última faixa "boa" (azul/verde) do

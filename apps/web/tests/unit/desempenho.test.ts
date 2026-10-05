@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONSUMO_LIMITE_DIARIO_REDE,
   diasNoPeriodo,
-  ehConsumoFuncionarios,
   metaDoSemaforo,
   periodoEquivalenteMesAnterior,
   projecaoDeFechamento,
@@ -10,18 +8,6 @@ import {
 import { FAIXAS_BRINDES, FAIXAS_CANCELAMENTO, FAIXAS_COMPRA_DIRETA } from "@/lib/rules/semaforos";
 
 const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
-
-describe("consumo de funcionários", () => {
-  it("limite diário da rede = 480 × R$ 10", () => {
-    expect(CONSUMO_LIMITE_DIARIO_REDE).toBe(4800);
-    expect(CONSUMO_LIMITE_DIARIO_REDE * 30).toBe(144000);
-  });
-  it("identifica o motivo sem depender de acento ou caixa", () => {
-    expect(ehConsumoFuncionarios("BRINDE CONSUMO FUNCIONARIOS")).toBe(true);
-    expect(ehConsumoFuncionarios("Brinde consumo funcionários")).toBe(true);
-    expect(ehConsumoFuncionarios("BRINDE ANIVERSARIANTE")).toBe(false);
-  });
-});
 
 describe("metas vindas do semáforo", () => {
   it("usa o teto da última faixa azul/verde", () => {

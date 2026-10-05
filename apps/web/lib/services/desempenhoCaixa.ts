@@ -7,7 +7,6 @@ import type { CorSemaforo } from "@/lib/rules/semaforos";
  */
 
 export type IndicadorDesempenhoId =
-  | "consumoFuncionarios"
   | "brindes"
   | "cancelamentoSalao"
   | "cancelamentoDelivery"
@@ -36,19 +35,6 @@ export interface MotivoDesempenho {
   participacao: number;
 }
 
-export interface ConsumoLimite {
-  limiteDiario: number;
-  dias: number;
-  /** Limite do período (limite diário × dias). */
-  limitePeriodo: number;
-  percentualUtilizado: number;
-  mediaPorFuncionarioDia: number;
-  funcionariosReferencia: number;
-  /** Projeção de fechamento do mês (null fora de mês em andamento). */
-  projecaoFechamento: number | null;
-  limiteMes: number | null;
-}
-
 export interface IndicadorDesempenho {
   id: IndicadorDesempenhoId;
   titulo: string;
@@ -72,8 +58,6 @@ export interface IndicadorDesempenho {
   variacaoPercentual: number | null;
   porLoja: LinhaLojaDesempenho[];
   porMotivo: MotivoDesempenho[];
-  /** Só para consumo de funcionários. */
-  consumo?: ConsumoLimite;
   /** Observação quando algo não pode ser calculado (ex.: quadro de funcionários por loja). */
   nota?: string;
 }

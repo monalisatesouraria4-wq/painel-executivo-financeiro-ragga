@@ -7,15 +7,8 @@ import {
   FAIXAS_COMPRA_DIRETA,
   type FaixaSemaforo,
 } from "@/lib/rules/semaforos";
-import {
-  CONSUMO_FUNCIONARIOS_REDE,
-  CONSUMO_LIMITE_DIARIO_REDE,
-  diasNoPeriodo,
-  ehConsumoFuncionarios,
-  metaDoSemaforo,
-  periodoEquivalenteMesAnterior,
-  projecaoDeFechamento,
-} from "@/lib/rules/desempenho";
+import { metaDoSemaforo, periodoEquivalenteMesAnterior } from "@/lib/rules/desempenho";
+import { classificarBrinde } from "@/lib/rules/brindes";
 import { getDb } from "@/lib/db/client";
 import { unidades, faturamento, brindes, cancelamentoSalao, cancelamentoDelivery, compraDireta } from "@/lib/db/schema";
 import type {
@@ -34,9 +27,12 @@ import type {
  * cards, o ranking e o detalhamento por motivo são todos derivados dela,
  * então os totais sempre batem.
  *
- * Brindes é separado em "consumo de funcionários" e "brindes a clientes"
- * pelo motivo — as duas partes somam exatamente o total antigo de
- * Brindes, sem dupla contagem.
+ * Brindes usa a classificação oficial do painel (`classificarBrinde`):
+ * o indicador avaliado (valor, % do faturamento, semáforo, ranking) considera
+ * SOMENTE os brindes CONTROLÁVEIS; os não controláveis (Aniversariante, Consumo
+ * de Funcionários, Empresas Parceiras/Desconto Empresas) ficam no total
+ * informado na nota, sem penalizar a loja. Não existe regra paralela de
+ * "limite diário de consumo".
  */
 
 interface LinhaBruta {
@@ -55,6 +51,35 @@ async function lojaMotivo(db: ReturnType<typeof getDb>, tabela: TabelaFato, ini:
     .where(between(tabela.data, ini, fim))
     .groupBy(unidades.codigo, tabela.motivo);
   return linhas.map((l) => ({ codigo: l.codigo, motivo: l.motivo, total: Number(l.total) }));
+}
+
+interface BrindesClassificados {
+  controlaveis: LinhaBruta[];
+  totalNaoControlaveis: number;
+}
+
+/** Brindes por loja × motivo × submotivo, classificados pela regra oficial (controlável × não controlável). */
+async function brindesClassificados(db: ReturnType<typeof getDb>, ini: Date, fim: Date): Promise<BrindesClassificados> {
+  const linhas = await db
+    .select({ codigo: unidades.codigo, motivo: brindes.motivo, motivo2: brindes.motivo2, total: sql<string>`sum(${brindes.valor})` })
+    .from(brindes)
+    .innerJoin(unidades, eq(brindes.unidadeId, unidades.id))
+    .where(between(brindes.data, ini, fim))
+    .groupBy(unidades.codigo, brindes.motivo, brindes.motivo2);
+  const controlaveis = new Map<string, LinhaBruta>();
+  let totalNaoControlaveis = 0;
+  for (const l of linhas) {
+    const valor = Number(l.total);
+    const c = classificarBrinde(l.motivo, l.motivo2);
+    if (!c.controlavel) {
+      totalNaoControlaveis += valor;
+      continue;
+    }
+    const chave = `${l.codigo}|${c.rotulo}`;
+    const atual = controlaveis.get(chave);
+    controlaveis.set(chave, { codigo: l.codigo, motivo: c.rotulo, total: (atual?.total ?? 0) + valor });
+  }
+  return { controlaveis: [...controlaveis.values()], totalNaoControlaveis };
 }
 
 async function faturamentoPorLoja(db: ReturnType<typeof getDb>, ini: Date, fim: Date): Promise<Map<string, number>> {
@@ -154,61 +179,6 @@ function montarIndicador(e: EntradaIndicador): IndicadorDesempenho {
   };
 }
 
-function montarConsumo(
-  atual: LinhaBruta[],
-  anterior: LinhaBruta[],
-  fatAtual: Map<string, number>,
-  inicio: Date,
-  fim: Date
-): IndicadorDesempenho {
-  const disponivel = atual.length > 0;
-  const valor = atual.reduce((s, l) => s + l.total, 0);
-  const anteriorTotal = anterior.length > 0 ? anterior.reduce((s, l) => s + l.total, 0) : null;
-  const dias = diasNoPeriodo(inicio, fim);
-  const limitePeriodo = CONSUMO_LIMITE_DIARIO_REDE * dias;
-  const fat = total(fatAtual);
-  const projecao = projecaoDeFechamento(inicio, fim, valor);
-  const diasMes = new Date(Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth() + 1, 0)).getUTCDate();
-  const v = variacao(valor, anteriorTotal);
-
-  const motivos = new Map<string, number>();
-  for (const l of atual) motivos.set(l.motivo, (motivos.get(l.motivo) ?? 0) + l.total);
-
-  return {
-    id: "consumoFuncionarios",
-    titulo: "Consumo de funcionários",
-    criterio: `Limite: R$ 10,00 por funcionário por dia (${CONSUMO_FUNCIONARIOS_REDE} funcionários = R$ 4.800,00/dia na rede)`,
-    disponivel,
-    semBaseAvaliacao: false,
-    valor,
-    faturamento: fat > 0 ? fat : null,
-    percentual: disponivel && fat > 0 ? (valor / fat) * 100 : null,
-    metaPercentual: null,
-    metaValor: limitePeriodo,
-    desvioReais: valor - limitePeriodo,
-    desvioPercentual: ((valor - limitePeriodo) / limitePeriodo) * 100,
-    semaforo: disponivel ? (valor <= limitePeriodo ? "verde" : "vermelho") : null,
-    anterior: { valor: anteriorTotal },
-    variacaoReais: v.reais,
-    variacaoPercentual: v.percentual,
-    porLoja: [],
-    porMotivo: [...motivos.entries()]
-      .map(([motivo, valorMotivo]) => ({ motivo, valor: valorMotivo, participacao: valor > 0 ? (valorMotivo / valor) * 100 : 0 }))
-      .sort((a, b) => b.valor - a.valor),
-    consumo: {
-      limiteDiario: CONSUMO_LIMITE_DIARIO_REDE,
-      dias,
-      limitePeriodo,
-      percentualUtilizado: (valor / limitePeriodo) * 100,
-      mediaPorFuncionarioDia: valor / (CONSUMO_FUNCIONARIOS_REDE * dias),
-      funcionariosReferencia: CONSUMO_FUNCIONARIOS_REDE,
-      projecaoFechamento: projecao,
-      limiteMes: projecao === null ? null : CONSUMO_LIMITE_DIARIO_REDE * diasMes,
-    },
-    nota: "Limite por loja indisponível: o quadro de funcionários por loja não foi informado (o limite não é dividido igualmente entre as unidades).",
-  };
-}
-
 export async function buscarDesempenhoCaixa(inicio: Date, fim: Date): Promise<DesempenhoCaixaData> {
   const equivalente = periodoEquivalenteMesAnterior(inicio, fim);
   const base: DesempenhoCaixaData = {
@@ -224,8 +194,8 @@ export async function buscarDesempenhoCaixa(inicio: Date, fim: Date): Promise<De
   const db = getDb();
   const [brAtual, brAnt, salaoAtual, salaoAnt, deliveryAtual, deliveryAnt, compraAtual, compraAnt, fatAtual, fatAnterior] =
     await Promise.all([
-      lojaMotivo(db, brindes, inicio, fim),
-      lojaMotivo(db, brindes, equivalente.inicio, equivalente.fim),
+      brindesClassificados(db, inicio, fim),
+      brindesClassificados(db, equivalente.inicio, equivalente.fim),
       lojaMotivo(db, cancelamentoSalao, inicio, fim),
       lojaMotivo(db, cancelamentoSalao, equivalente.inicio, equivalente.fim),
       lojaMotivo(db, cancelamentoDelivery, inicio, fim),
@@ -236,13 +206,13 @@ export async function buscarDesempenhoCaixa(inicio: Date, fim: Date): Promise<De
       faturamentoPorLoja(db, equivalente.inicio, equivalente.fim),
     ]);
 
-  const clientes = (l: LinhaBruta[]) => l.filter((x) => !ehConsumoFuncionarios(x.motivo));
-  const funcionarios = (l: LinhaBruta[]) => l.filter((x) => ehConsumoFuncionarios(x.motivo));
   const comuns = { fatAtual, fatAnterior };
 
   base.indicadores = [
-    montarConsumo(funcionarios(brAtual), funcionarios(brAnt), fatAtual, inicio, fim),
-    montarIndicador({ id: "brindes", titulo: "Brindes", faixas: FAIXAS_BRINDES, atual: clientes(brAtual), anterior: clientes(brAnt), ...comuns }),
+    {
+      ...montarIndicador({ id: "brindes", titulo: "Brindes (controláveis)", faixas: FAIXAS_BRINDES, atual: brAtual.controlaveis, anterior: brAnt.controlaveis, ...comuns }),
+      nota: `Avaliação somente sobre os brindes controláveis. Brindes não controláveis no período: ${brAtual.totalNaoControlaveis.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (Aniversariante, Consumo de Funcionários e Empresas Parceiras) — fazem parte do total de brindes, mas não penalizam a loja.`,
+    },
     montarIndicador({ id: "cancelamentoSalao", titulo: "Cancelamento salão", faixas: FAIXAS_CANCELAMENTO, atual: salaoAtual, anterior: salaoAnt, ...comuns }),
     montarIndicador({ id: "cancelamentoDelivery", titulo: "Cancelamento delivery", faixas: FAIXAS_CANCELAMENTO, atual: deliveryAtual, anterior: deliveryAnt, ...comuns }),
     montarIndicador({ id: "compraDireta", titulo: "Compra direta", faixas: FAIXAS_COMPRA_DIRETA, atual: compraAtual, anterior: compraAnt, ...comuns }),
