@@ -596,8 +596,12 @@ export function VisaoGeralView({
   const [colunaOrdem, setColunaOrdem] = useState<"faturamento" | "retiradaCompraDireta" | "brindes" | "cancelamentoSalao" | "cancelamentoDelivery">("faturamento");
   const [dirDesc, setDirDesc] = useState(false);
   const [pontosAbertos, setPontosAbertos] = useState<Set<string>>(new Set());
-  // Guard contra resposta fora de ordem: só a última requisição disparada atualiza a tela.
-  const ultimaRequisicao = useRef(0);
+  // Período cuja resposta veio com datas diferentes das pedidas (não deveria ocorrer): evita pedir em laço.
+  const periodoSemCorrespondencia = useRef<string | null>(null);
+
+  function datasCompletas(v: string) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) && Number(v.slice(0, 4)) >= 2000;
+  }
 
   function alternarLoja(unidade: string) {
     setLojasExpandidas((atual) => {
@@ -620,23 +624,41 @@ export function VisaoGeralView({
   function alterarPeriodo(novoInicio: string, novoFim: string) {
     setDataInicioSel(novoInicio);
     setDataFimSel(novoFim);
-    // Digitar no campo de data gera valores intermediários (ex.: ano 0002, ou início > fim).
-    // Consultá-los devolveria "sem dados" e a resposta poderia chegar depois da correta —
-    // só consulta quando as duas datas estão completas (ano com 4 dígitos) e em ordem.
-    const completa = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && Number(v.slice(0, 4)) >= 2000;
-    if (!completa(novoInicio) || !completa(novoFim) || novoInicio > novoFim) return;
-    const requisicao = ++ultimaRequisicao.current;
+  }
+
+  // Sincronização filtro → dados: a busca depende das datas ATUALMENTE selecionadas (estado), não do valor capturado
+  // pelo evento. Digitar no campo de data gera valores intermediários (ex.: ano 0002, ou início > fim): só se consulta
+  // com as duas datas completas (ano com 4 dígitos) e em ordem. Ao trocar a seleção, a busca anterior é cancelada
+  // (`ativo = false`), então uma resposta antiga nunca sobrescreve a mais recente.
+  const selecaoValida = datasCompletas(dataInicioSel) && datasCompletas(dataFimSel) && dataInicioSel <= dataFimSel;
+  const periodoDosDados = `${paraInputDate(dados.dataInicio)}|${paraInputDate(dados.dataFim)}`;
+  const periodoSelecionado = `${dataInicioSel}|${dataFimSel}`;
+  // Dados exibidos pertencem a OUTRO período que o selecionado → a tela mostra "atualizando", nunca números antigos.
+  const desatualizado = selecaoValida && periodoDosDados !== periodoSelecionado;
+
+  useEffect(() => {
+    if (!selecaoValida || periodoSelecionado === periodoDosDados || periodoSelecionado === periodoSemCorrespondencia.current) return;
+    let ativo = true;
     iniciarTransicao(async () => {
       const [resultado, resultadoDesempenho] = await Promise.all([
-        buscarVisaoGeralPorPeriodo(dataDoInput(novoInicio), dataDoInput(novoFim)),
-        buscarDesempenhoCaixa(dataDoInput(novoInicio), dataDoInput(novoFim)),
+        buscarVisaoGeralPorPeriodo(dataDoInput(dataInicioSel), dataDoInput(dataFimSel)),
+        buscarDesempenhoCaixa(dataDoInput(dataInicioSel), dataDoInput(dataFimSel)),
       ]);
-      if (requisicao === ultimaRequisicao.current) {
-        setDados(resultado);
-        setDesempenho(resultadoDesempenho);
+      if (!ativo) return;
+      // Salvaguarda contra laço: se a resposta vier de um período diferente do pedido, aplica (o cabeçalho mostra o
+      // período real) e não pede de novo o mesmo período.
+      if (`${paraInputDate(resultado.dataInicio)}|${paraInputDate(resultado.dataFim)}` !== periodoSelecionado) {
+        periodoSemCorrespondencia.current = periodoSelecionado;
       }
+      setDados(resultado);
+      setDesempenho(resultadoDesempenho);
     });
-  }
+    return () => {
+      ativo = false;
+    };
+    // `iniciarTransicao` é estável; as datas e o período dos dados definem quando buscar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selecaoValida, periodoSelecionado, periodoDosDados]);
 
   /**
    * Filtro de loja (item 2 da etapa de revisão): quando uma loja específica é
@@ -835,7 +857,11 @@ export function VisaoGeralView({
               <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-ragga-blue/55">Central de caixa</p>
               <h1 className="mt-0.5 text-[1.75rem] font-extrabold leading-tight text-ragga-blue-dark">Visão Geral</h1>
               <p className="mt-0.5 text-sm capitalize text-foreground/45">
-                {dados.modoPeriodo ? `Período: ${textoPeriodo}` : formatadorDataExtenso.format(dados.dataFim)}
+                {desatualizado
+                  ? `Período: ${formatadorData.format(dataDoInput(dataInicioSel))} até ${formatadorData.format(dataDoInput(dataFimSel))} — atualizando…`
+                  : dados.modoPeriodo
+                    ? `Período: ${textoPeriodo}`
+                    : formatadorDataExtenso.format(dados.dataFim)}
               </p>
             </div>
           </div>
@@ -891,6 +917,15 @@ export function VisaoGeralView({
         )}
       </div>
 
+      {desatualizado ? (
+        <div role="status" aria-live="polite" className="rounded-2xl border border-ragga-blue/10 bg-white px-6 py-16 text-center">
+          <p className="text-sm font-semibold text-ragga-blue-dark">
+            Atualizando os dados de {formatadorData.format(dataDoInput(dataInicioSel))} até {formatadorData.format(dataDoInput(dataFimSel))}…
+          </p>
+          <p className="mt-1 text-xs text-foreground/50">Os valores do período anterior foram ocultados para não serem confundidos com este período.</p>
+        </div>
+      ) : (
+      <>
       {!dados.conectado && (
         <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
           Banco de dados ainda não conectado (<code>DATABASE_URL</code> não definida). Os
@@ -1402,6 +1437,8 @@ export function VisaoGeralView({
           </table>
         </div>
       </Secao>
+      </>
+      )}
     </main>
   );
 }
