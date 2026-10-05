@@ -16,7 +16,9 @@ function criarClienteDb() {
       "DATABASE_URL não configurada. Defina em apps/web/.env.local (ver .env.example)."
     );
   }
-  const client = postgres(connectionString, { prepare: false });
+  // Pool contido para ambiente serverless: poucas conexões por instância, ociosas fecham logo (evita reutilizar
+  // conexão já derrubada pelo pooler) e a conexão inicial não fica pendurada.
+  const client = postgres(connectionString, { prepare: false, max: 3, idle_timeout: 20, connect_timeout: 10 });
   return drizzle(client, { schema });
 }
 
