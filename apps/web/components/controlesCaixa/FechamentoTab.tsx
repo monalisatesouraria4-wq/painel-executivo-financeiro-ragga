@@ -1,7 +1,15 @@
+"use client";
+
+import { useState } from "react";
 import type { CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
 import { EstadoVazio } from "@/components/ui/EstadoVazio";
-import type { AberturaFechamentoData } from "@/lib/services/aberturaFechamento";
+import {
+  filtrarLinhasPorStatus,
+  resumirLinhasFechamento,
+  type AberturaFechamentoData,
+  type FiltroStatusFechamento,
+} from "@/lib/services/aberturaFechamento";
 
 const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -37,19 +45,40 @@ function BigNumberCard({ titulo, valor, disponivel }: { titulo: string; valor: s
 }
 
 export function FechamentoTab({ dados, unidade }: { dados: AberturaFechamentoData; unidade?: CodigoUnidade }) {
-  const linhas = unidade ? dados.linhas.filter((l) => l.unidade === unidade) : dados.linhas;
-  const disponivel = unidade ? linhas.length > 0 : dados.disponivel;
-  const abertos = unidade ? linhas.length : dados.abertos;
-  const fechados = unidade ? linhas.filter((l) => l.fechado).length : dados.fechados;
-  const emAberto = unidade ? linhas.filter((l) => l.situacao === "Aberto").length : dados.emAberto;
-  const diferencaFinanceira = unidade ? linhas.reduce((s, l) => s + (l.difFechamento ?? 0), 0) : dados.diferencaFinanceira;
+  // Filtro de STATUS (Todos/Conciliado/Fechado/Aberto): recorta as linhas já carregadas (junto com Loja/Data) e
+  // recalcula os big numbers com as MESMAS fórmulas. "Todos" sem loja mantém exatamente os agregados do serviço.
+  const [status, setStatus] = useState<FiltroStatusFechamento>("TODOS");
+  const linhasLoja = unidade ? dados.linhas.filter((l) => l.unidade === unidade) : dados.linhas;
+  const linhas = filtrarLinhasPorStatus(linhasLoja, status);
+  const usarAgregadoDoServico = !unidade && status === "TODOS";
+  const resumo = resumirLinhasFechamento(linhas);
+  const disponivel = usarAgregadoDoServico ? dados.disponivel : resumo.disponivel;
+  const abertos = usarAgregadoDoServico ? dados.abertos : resumo.abertos;
+  const fechados = usarAgregadoDoServico ? dados.fechados : resumo.fechados;
+  const emAberto = usarAgregadoDoServico ? dados.emAberto : resumo.emAberto;
+  const diferencaFinanceira = usarAgregadoDoServico ? dados.diferencaFinanceira : resumo.diferencaFinanceira;
+  const semDadosPorStatus = status !== "TODOS" && linhas.length === 0;
 
   return (
     <div className="space-y-4">
+      <label className="flex items-center gap-2 text-sm font-medium text-ragga-blue-dark">
+        Status
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value as FiltroStatusFechamento)}
+          className="rounded-md border border-ragga-blue/15 bg-ragga-surface px-3 py-2 text-sm"
+        >
+          <option value="TODOS">Todos</option>
+          <option value="Conciliado">Conciliado</option>
+          <option value="Fechado">Fechado</option>
+          <option value="Aberto">Aberto</option>
+        </select>
+      </label>
+
       {!disponivel && (
         <div className="rounded-lg border border-ragga-blue/15 bg-ragga-bg px-4 py-3 text-sm text-ragga-blue-dark">
-          Sem dados para esta referência.
-          {dados.dataMaisRecenteDisponivel && (
+          {semDadosPorStatus ? "Sem dados no período." : "Sem dados para esta referência."}
+          {!semDadosPorStatus && dados.dataMaisRecenteDisponivel && (
             <span className="text-foreground/50"> Última data com registro: {dados.dataMaisRecenteDisponivel.toLocaleDateString("pt-BR", { timeZone: "UTC" })}.</span>
           )}
         </div>
