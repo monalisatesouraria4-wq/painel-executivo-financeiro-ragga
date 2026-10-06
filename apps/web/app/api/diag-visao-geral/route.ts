@@ -26,11 +26,13 @@ import { buscarDesempenhoCaixa } from "@/lib/services/desempenhoCaixa.server";
  * `?token=`; qualquer outro caso → 404. O token nunca é devolvido nem registrado em log.
  *
  * Uso: /api/diag-visao-geral?inicio=2026-09-01&fim=2026-09-30   (header x-diag-token: <valor>)
- * Opcional: &so=ambiente|ping|contagem|etapas|real|pipeline|visao|desempenho|ssr   (sem `so`: tudo, exceto `visao`, `real` e `pipeline`)
+ * Opcional: &so=ambiente|ping|contagem|etapas|real|pipeline|poolcompartilhado|visao|desempenho|ssr   (sem `so`: tudo, exceto `visao`, `real`, `pipeline` e `poolcompartilhado`)
  *   etapas → as consultas internas de `buscarVisaoGeralPeriodo` em paralelo, cada uma com cliente próprio e timeout de 5 s
              (acrescente &seq=1 para rodar uma de cada vez)
  *   pipeline → prova de hipótese: N consultas simples em paralelo com a configuração atual do postgres-js × com
  *             `max_pipeline: 1` (&n=34 &reps=2). Somente `select count(*)`; não toca no pool compartilhado.
+ *   poolcompartilhado → N consultas simples pelo `getDb()` REAL do app (o singleton compartilhado entre requisições da
+ *             instância), para N em &ns=1,3,14,34. Informa idade/uso da instância (instância quente) e atividade no banco.
  *   real   → a própria `buscarVisaoGeralPeriodo` + fotografias de `pg_stat_activity` aos 4 s, 9 s e 13 s (mostra qual
              consulta está pendente e em que espera)
  */
@@ -283,6 +285,51 @@ async function provaDePipeline(ini: Date, fim: Date, n: number, opcoes: Record<s
   return resultado;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Prova do pool COMPARTILHADO: as mesmas consultas simples, mas pelo `getDb()` real do app (singleton do processo,
+// compartilhado entre requisições e rotas da instância). Contadores de módulo mostram se a instância é "quente".
+// ---------------------------------------------------------------------------------------------------------------------
+const instanciaIniciouEm = Date.now();
+let requisicoesNestaInstancia = 0;
+const TIMEOUT_POOL_MS = 8_000;
+
+async function provaPoolCompartilhado(ini: Date, fim: Date, n: number) {
+  const db = getDb();
+  const t0 = Date.now();
+  const tempos: number[] = [];
+  let erros = 0;
+  let ultimoErro: ErroLegivel | undefined;
+  const consultas = Array.from({ length: n }, () =>
+    db
+      .select({ n: sql<string>`count(*)` })
+      .from(faturamento)
+      .where(between(faturamento.data, ini, fim))
+      .then(() => void tempos.push(Date.now() - t0))
+      .catch((e) => {
+        erros++;
+        ultimoErro = erroLegivel(e);
+      })
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const venceu = await Promise.race([
+    Promise.all(consultas).then(() => "concluiu" as const),
+    new Promise<"timeout">((r) => {
+      timer = setTimeout(() => r("timeout"), TIMEOUT_POOL_MS);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return {
+    consultasSimultaneas: n,
+    concluidasOk: tempos.length,
+    comErro: erros,
+    pendentesAoFinal: n - tempos.length - erros,
+    resultado: venceu === "timeout" ? "TIMEOUT (trava)" : erros > 0 ? "ERRO" : "OK",
+    ms: Date.now() - t0,
+    tempoDaConsultaMs: tempos.length ? { min: Math.min(...tempos), max: Math.max(...tempos) } : null,
+    ultimoErro,
+  };
+}
+
 const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export async function GET(request: Request) {
@@ -292,6 +339,7 @@ export async function GET(request: Request) {
   if (!tokenConfere(tokenEsperado, request.headers.get("x-diag-token") ?? urlReq.searchParams.get("token"))) return naoEncontrado();
 
   const inicioDaRota = Date.now(); // por requisição (a instância pode ser reaproveitada)
+  requisicoesNestaInstancia++;
   const params = urlReq.searchParams;
   const so = params.get("so");
   const inicioParam = params.get("inicio");
@@ -299,9 +347,9 @@ export async function GET(request: Request) {
   const periodoValido = Boolean(inicioParam && fimParam && DATA_VALIDA.test(inicioParam) && DATA_VALIDA.test(fimParam));
   const inicio = periodoValido ? dataDoInput(inicioParam!) : dataDoInput("2026-09-01");
   const fim = periodoValido ? dataDoInput(fimParam!) : dataDoInput("2026-09-30");
-  const quer = (n: string) => (so ? so === n : n !== "visao" && n !== "real" && n !== "pipeline");
+  const quer = (n: string) => (so ? so === n : n !== "visao" && n !== "real" && n !== "pipeline" && n !== "poolcompartilhado");
 
-  const saida: Record<string, unknown> = { versao: "diag-3", periodoTestado: `${dia(inicio)} a ${dia(fim)}`, timeoutPorEtapaMs: TIMEOUT_ETAPA_MS };
+  const saida: Record<string, unknown> = { versao: "diag-4", periodoTestado: `${dia(inicio)} a ${dia(fim)}`, timeoutPorEtapaMs: TIMEOUT_ETAPA_MS };
 
   if (quer("ambiente")) {
     let host: string | null = null;
@@ -399,6 +447,20 @@ export async function GET(request: Request) {
       rodadas.push({ configuracao: "max_pipeline: 1 (max 3)", rodada: r, ...(await provaDePipeline(inicio, fim, n, { ...base, max_pipeline: 1 })) });
     }
     saida.pipeline = { consultasPorRodada: n, timeoutPorRodadaMs: TIMEOUT_PROVA_MS, rodadas };
+  }
+  if (quer("poolcompartilhado")) {
+    const ns = (params.get("ns") ?? "1,3,14,34")
+      .split(",")
+      .map((x) => Math.min(Math.max(Number(x) || 1, 1), 100))
+      .slice(0, 8);
+    const casos: unknown[] = [];
+    for (const n of ns) casos.push(await provaPoolCompartilhado(inicio, fim, n));
+    saida.poolCompartilhado = {
+      instancia: { idadeMs: Date.now() - instanciaIniciouEm, requisicoesDestaRotaNaInstancia: requisicoesNestaInstancia, instanciaQuente: requisicoesNestaInstancia > 1 },
+      timeoutPorCasoMs: TIMEOUT_POOL_MS,
+      casos,
+      atividadeNoBancoAoFinal: await amostraDeAtividade(),
+    };
   }
   if (quer("real")) {
     const amostras: unknown[] = [];
