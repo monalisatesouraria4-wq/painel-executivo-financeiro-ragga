@@ -88,7 +88,7 @@ export async function buscarAberturaFechamento(dataSelecionada: Date): Promise<A
   }));
 
   const emAberto = linhas.filter((l) => l.situacao === "Aberto").length;
-  const diferencaFinanceira = linhas.reduce((soma, l) => soma + (l.difFechamento ?? 0), 0);
+  const diferencaFinanceira = linhas.reduce((soma, l) => soma + (l.difTotal ?? 0), 0); // campo "DIF. TOTAL" da base
 
   return {
     conectado: true,
@@ -196,7 +196,7 @@ export async function buscarAberturaFechamentoIntervalo(
   }));
 
   const emAberto = linhas.filter((l) => l.situacao === "Aberto").length;
-  const diferencaFinanceira = linhas.reduce((soma, l) => soma + (l.difFechamento ?? 0), 0);
+  const diferencaFinanceira = linhas.reduce((soma, l) => soma + (l.difTotal ?? 0), 0); // campo "DIF. TOTAL" da base
 
   return {
     conectado: true,

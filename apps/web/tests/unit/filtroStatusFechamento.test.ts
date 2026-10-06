@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { filtrarLinhasPorStatus, resumirLinhasFechamento, type CaixaAberturaFechamentoLinha } from "@/lib/services/aberturaFechamento";
 
-function linha(situacao: string, difFechamento: number | null, unidade = "BG 01"): CaixaAberturaFechamentoLinha {
+// O 2º argumento é o "DIF. TOTAL" (fonte do card). `difFechamento` recebe um valor DIFERENTE de propósito para provar
+// que o card não usa mais esse campo.
+function linha(situacao: string, difTotal: number | null, unidade = "BG 01"): CaixaAberturaFechamentoLinha {
   return {
     unidade: unidade as never,
     caixa: "CX",
@@ -11,9 +13,9 @@ function linha(situacao: string, difFechamento: number | null, unidade = "BG 01"
     fechamento: null,
     situacao,
     fechado: situacao === "Fechado" || situacao === "Conciliado",
-    difFechamento,
+    difFechamento: difTotal === null ? null : difTotal + 999,
     difConciliacao: null,
-    difTotal: null,
+    difTotal,
   };
 }
 

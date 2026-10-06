@@ -43,7 +43,7 @@ export interface AberturaFechamentoData {
   abertos: number;
   fechados: number;
   emAberto: number;
-  /** Soma de `difFechamento` (diferença identificada pelo operador no fechamento) — agregação pura das linhas, sem tolerância inventada. */
+  /** Soma de `difTotal` (campo "DIF. TOTAL" da base de Fechamento) — agregação pura das linhas; linhas sem DIF. TOTAL não entram na soma. */
   diferencaFinanceira: number;
   linhas: CaixaAberturaFechamentoLinha[];
 }
@@ -62,7 +62,7 @@ export function filtrarLinhasPorStatus(linhas: CaixaAberturaFechamentoLinha[], s
 /**
  * Resumo dos "big numbers" a partir de um conjunto de linhas — EXATAMENTE as mesmas fórmulas de
  * `aberturaFechamento.server.ts` (abertos = linhas; fechados = Fechado|Conciliado; emAberto = situação "Aberto";
- * diferença financeira = soma de difFechamento), só aplicadas sobre o recorte filtrado.
+ * diferença financeira = soma de `difTotal`, o campo "DIF. TOTAL" da base), só aplicadas sobre o recorte filtrado.
  */
 export function resumirLinhasFechamento(linhas: CaixaAberturaFechamentoLinha[]) {
   return {
@@ -70,6 +70,6 @@ export function resumirLinhasFechamento(linhas: CaixaAberturaFechamentoLinha[]) 
     abertos: linhas.length,
     fechados: linhas.filter((l) => l.fechado).length,
     emAberto: linhas.filter((l) => l.situacao === "Aberto").length,
-    diferencaFinanceira: linhas.reduce((soma, l) => soma + (l.difFechamento ?? 0), 0),
+    diferencaFinanceira: linhas.reduce((soma, l) => soma + (l.difTotal ?? 0), 0),
   };
 }

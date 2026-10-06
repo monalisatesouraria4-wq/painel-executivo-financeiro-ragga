@@ -14,6 +14,23 @@ import { classificarSemaforo, FAIXAS_COMPRA_DIRETA, type CorSemaforo } from "@/l
  * nunca sobre o faturamento.
  */
 
+/**
+ * "NOTA FISCAL" NÃO é retirada financeira real: o cliente que pediu a NF depois da compra obriga a loja a lançar o
+ * pedido de novo, e a retirada "fictícia" no sistema só evita uma falta artificial no fechamento do caixa. O registro
+ * continua na base e no detalhamento (rastreabilidade), mas é classificado aqui, na camada de cálculo, como AJUSTE SEM
+ * SAÍDA DE CAIXA: fica fora do total de retirada financeira, do % sobre o faturamento, do ranking e dos status.
+ * Os dados originais não são alterados.
+ */
+export const ROTULO_AJUSTE_SEM_SAIDA = "Nota Fiscal — Ajuste sem saída de caixa";
+
+export function ehAjusteSemSaidaDeCaixa(motivo: string): boolean {
+  return motivo
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toUpperCase() === "NOTA FISCAL";
+}
+
 export type StatusCompraDireta = "controlado" | "atencao" | "critico";
 
 export const ROTULO_STATUS: Record<StatusCompraDireta, string> = {
@@ -57,6 +74,8 @@ export interface LojaCompraDireta {
   cor: CorSemaforo;
   motivos: MotivoCompraDireta[];
   diario: DiaCompraDireta[];
+  /** Total de "NOTA FISCAL" (ajuste sem saída de caixa) da loja no período — NÃO está em `valor`. */
+  ajustesSemSaida: number;
 }
 
 export interface PeriodoCompraDireta {
@@ -72,6 +91,10 @@ export interface PeriodoCompraDireta {
   cor: CorSemaforo;
   lojasForaDoLimite: number;
   contagemStatus: Record<StatusCompraDireta, number>;
+  /** Total de ajustes sem saída de caixa (somente "NOTA FISCAL") — fora de `valor`/`percentual`/status/ranking. */
+  ajustesSemSaida: number;
+  /** Total lançado em Compra Direta = retirada financeira real (`valor`) + ajustes sem saída de caixa. */
+  totalLancado: number;
   porLoja: LojaCompraDireta[];
   motivos: MotivoCompraDireta[];
   diario: DiaCompraDireta[];
@@ -132,9 +155,14 @@ export function montarPeriodoCompraDireta(
   inicioOcorrencia: string,
   fimOcorrencia: string,
   faturamentoLinhas: LinhaFaturamentoDia[],
-  compraDiretaLinhas: LinhaCompraDiretaDia[]
+  linhasLancadas: LinhaCompraDiretaDia[]
 ): PeriodoCompraDireta {
   const dias = diasDoIntervalo(inicioOcorrencia, fimOcorrencia);
+  // Retirada financeira real × ajuste sem saída de caixa (NOTA FISCAL): separados aqui, sem tocar nos dados.
+  const compraDiretaLinhas = linhasLancadas.filter((l) => !ehAjusteSemSaidaDeCaixa(l.motivo));
+  const ajusteLinhas = linhasLancadas.filter((l) => ehAjusteSemSaidaDeCaixa(l.motivo));
+  const ajusteLoja = new Map<string, number>();
+  for (const l of ajusteLinhas) ajusteLoja.set(l.codigo, (ajusteLoja.get(l.codigo) ?? 0) + l.valor);
 
   const fatLojaDia = new Map<string, Map<string, number>>();
   for (const l of faturamentoLinhas) {
@@ -164,7 +192,7 @@ export function montarPeriodoCompraDireta(
       .map(([motivo, valor]) => ({ motivo, valor: arred(valor) }))
       .sort((a, b) => b.valor - a.valor || a.motivo.localeCompare(b.motivo));
 
-  const codigos = new Set<string>([...fatLojaDia.keys(), ...cdLojaDia.keys()]);
+  const codigos = new Set<string>([...fatLojaDia.keys(), ...cdLojaDia.keys(), ...ajusteLoja.keys()]);
   const porLoja: LojaCompraDireta[] = UNIDADES.filter((u) => codigos.has(u)).map((unidade) => {
     const diario = dias.map((data) => ({
       data,
@@ -185,6 +213,7 @@ export function montarPeriodoCompraDireta(
       cor,
       motivos: agruparMotivos(cdLojaMotivos.get(unidade) ?? []),
       diario,
+      ajustesSemSaida: arred(ajusteLoja.get(unidade) ?? 0),
     };
   });
 
@@ -201,6 +230,7 @@ export function montarPeriodoCompraDireta(
 
   const faturamento = arred(porLoja.reduce((s, l) => s + l.faturamento, 0));
   const valor = arred(porLoja.reduce((s, l) => s + l.valor, 0));
+  const ajustesSemSaida = arred(porLoja.reduce((s, l) => s + l.ajustesSemSaida, 0));
   const percentual = faturamento > 0 ? (valor / faturamento) * 100 : 0;
   const { status, cor } = statusDoPercentual(percentual);
   const contagemStatus: Record<StatusCompraDireta, number> = { controlado: 0, atencao: 0, critico: 0 };
@@ -209,7 +239,7 @@ export function montarPeriodoCompraDireta(
   return {
     inicioOcorrencia,
     fimOcorrencia,
-    disponivel: compraDiretaLinhas.length > 0,
+    disponivel: linhasLancadas.length > 0,
     faturamento,
     valor,
     percentual,
@@ -217,6 +247,8 @@ export function montarPeriodoCompraDireta(
     cor,
     lojasForaDoLimite: contagemStatus.atencao + contagemStatus.critico,
     contagemStatus,
+    ajustesSemSaida,
+    totalLancado: arred(valor + ajustesSemSaida),
     porLoja,
     motivos: agruparMotivos(compraDiretaLinhas.map((l) => ({ motivo: l.motivo, valor: l.valor }))),
     diario,

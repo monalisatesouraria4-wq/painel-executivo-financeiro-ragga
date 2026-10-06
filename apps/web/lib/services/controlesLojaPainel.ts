@@ -9,7 +9,7 @@ import type { PdvMaquininhaLinha, TrocoCaixaLinha, TrocoLinha } from "@/lib/serv
  * ou de importação foi alterada, e nenhum limite/meta foi criado.
  *
  * O que significa cada coluna (sempre as definições já existentes de cada aba):
- * - Fechamento: valor = Σ `difFechamento` (mesmo número do card "Diferença nos fechamentos realizados pelo operador"),
+ * - Fechamento: valor = Σ `difTotal` (o campo "DIF. TOTAL" da base — a MESMA fonte do card "Diferença nos fechamentos realizados pelo operador"),
  *   COM sinal. Não existe % sobre faturamento nessa aba → sem coluna de %.
  * - PDV × Maquininha: valor = diferença = Maquininha − PDV (como na tabela atual), COM sinal. Sem % (não há regra
  *   percentual confiável — a coluna antiga foi removida de propósito).
@@ -65,7 +65,7 @@ const redeVazia: MetricaLoja<null> = { unidade: "REDE", valor: 0, percentual: nu
 
 export function agregarFechamento(linhas: CaixaAberturaFechamentoLinha[]): PainelLojas<CaixaAberturaFechamentoLinha[]> {
   const lojas: MetricaLoja<CaixaAberturaFechamentoLinha[]>[] = [...porLojaOrdenada(linhas)].map(([unidade, ls]) => {
-    const valor = arred(ls.reduce((s, l) => s + (l.difFechamento ?? 0), 0));
+    const valor = arred(ls.reduce((s, l) => s + (l.difTotal ?? 0), 0)); // DIF. TOTAL — igual ao card
     return { unidade, valor, percentual: null, grandeza: Math.abs(valor), quantidade: ls.length, detalhe: ls };
   });
   if (lojas.length === 0) return { disponivel: false, rede: redeVazia, lojas };
@@ -98,6 +98,14 @@ export function agregarPdv(linhas: PdvMaquininhaLinha[]): PainelLojas<DetalhePdv
     rede: { unidade: "REDE", valor, percentual: null, grandeza: Math.abs(valor), quantidade: lojas.length, detalhe: null },
     lojas,
   };
+}
+
+/**
+ * % de divergência do PDV × Maquininha = (Diferença ÷ Total PDV) × 100, com o MESMO sinal da Diferença (Maquininha − PDV).
+ * Sem Total PDV (zero) não há percentual válido → `null`.
+ */
+export function percentualDivergenciaPdv(diferenca: number, totalPdv: number): number | null {
+  return totalPdv !== 0 ? (diferenca / totalPdv) * 100 : null;
 }
 
 /** Linha bruta de PDV × Maquininha por forma de pagamento (detalhe da expansão). */

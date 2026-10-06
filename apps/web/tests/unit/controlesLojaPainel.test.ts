@@ -26,7 +26,8 @@ const cx = (unidade: string, caixa: string, situacao: string, dif: number | null
   fechamento: null,
   situacao,
   fechado: situacao !== "Aberto",
-  difFechamento: dif,
+  // `difFechamento` recebe um valor DIFERENTE de propósito: a tabela por loja deve usar `difTotal` (igual ao card).
+  difFechamento: dif === null ? null : dif * 7 + 1000,
   difConciliacao: null,
   difTotal: dif,
 });
@@ -39,8 +40,8 @@ describe("Fechamento por loja", () => {
     expect(p.lojas.find((l) => l.unidade === "BG 01")!.valor).toBe(-20);
     expect(p.lojas.find((l) => l.unidade === "BG 03")!.valor).toBe(-100);
     expect(p.rede.valor).toBe(p.lojas.reduce((s, l) => s + l.valor, 0));
-    expect(p.rede.valor).toBe(atual.reduce((s, l) => s + (l.difFechamento ?? 0), 0));
-    for (const l of p.lojas) expect(l.valor).toBe(l.detalhe.reduce((s, c) => s + (c.difFechamento ?? 0), 0));
+    expect(p.rede.valor).toBe(atual.reduce((s, l) => s + (l.difTotal ?? 0), 0));
+    for (const l of p.lojas) expect(l.valor).toBe(l.detalhe.reduce((s, c) => s + (c.difTotal ?? 0), 0));
     expect(p.rede.quantidade).toBe(atual.length);
   });
 

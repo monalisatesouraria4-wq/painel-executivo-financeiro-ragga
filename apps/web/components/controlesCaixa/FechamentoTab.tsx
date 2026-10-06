@@ -30,8 +30,8 @@ const formatadorMoeda = new Intl.NumberFormat("pt-BR", { style: "currency", curr
  * aberto em 28/09 com fechamento após a meia-noite, em 29/09, continua
  * contado em 28/09 — é a mesma linha, chave por data de abertura);
  * "Diferença" = caixas operados − caixas fechados (= `emAberto`, já
- * calculado no serviço); "Diferença nos fechamentos" = soma real de
- * `difFechamento` (diferença identificada pelo operador no fechamento).
+ * calculado no serviço); "Diferença nos fechamentos" = soma do campo
+ * "DIF. TOTAL" da base (`difTotal`) dos registros exibidos — respeita período, loja e Status.
  *
  * Filtro de Loja (item 2 da etapa de revisão, modo "Data de referência"):
  * filtra `linhas` client-side e recalcula os big numbers a partir do
@@ -148,7 +148,7 @@ export function FechamentoTab({
           { titulo: "Caixas", celula: (l) => l.quantidade },
           { titulo: "Em aberto", celula: (l) => l.detalhe.filter((x) => x.situacao === "Aberto").length },
         ]}
-        notaStatus="Diferença = soma das diferenças nos fechamentos realizados pelo operador (com sinal: negativo = falta). Status = distância até zero contra o período comparado (menor = 🟢 melhorou · maior = 🔴 piorou). Não há meta/limite de Fechamento cadastrado. O filtro de Status acima vale para esta tabela."
+        notaStatus="Diferença = soma do campo DIF. TOTAL da base (a mesma fonte do card; com sinal: negativo = falta; registros sem DIF. TOTAL não entram). Status = distância até zero contra o período comparado (menor = 🟢 melhorou · maior = 🔴 piorou). Não há meta/limite de Fechamento cadastrado. O filtro de Status acima vale para esta tabela."
         renderDetalhe={(loja, c, temBase, periodoComp) => <DetalheFechamentoLoja loja={loja} comparada={c} temBase={temBase} periodoComp={periodoComp} />}
       />
 
@@ -214,8 +214,8 @@ function DetalheFechamentoLoja({
   temBase: boolean;
   periodoComp: string;
 }) {
-  const caixas = [...loja.detalhe].sort((a, b) => (a.difFechamento ?? 0) - (b.difFechamento ?? 0) || a.caixa.localeCompare(b.caixa));
-  const total = caixas.reduce((s, c) => s + (c.difFechamento ?? 0), 0);
+  const caixas = [...loja.detalhe].sort((a, b) => (a.difTotal ?? 0) - (b.difTotal ?? 0) || a.caixa.localeCompare(b.caixa));
+  const total = caixas.reduce((s, c) => s + (c.difTotal ?? 0), 0);
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-6">
@@ -245,16 +245,15 @@ function DetalheFechamentoLoja({
                 <td className="px-2">{c.movimento}</td>
                 <td className="px-2">{c.operador ?? "—"}</td>
                 <td className="px-2">{c.situacao}</td>
-                <td className={`px-2 ${(c.difFechamento ?? 0) < 0 ? "font-semibold text-semaforo-vermelho" : ""}`}>{c.difFechamento !== null ? formatadorMoeda.format(c.difFechamento) : "—"}</td>
+                <td className="px-2">{c.difFechamento !== null ? formatadorMoeda.format(c.difFechamento) : "—"}</td>
                 <td className="px-2">{c.difConciliacao !== null ? formatadorMoeda.format(c.difConciliacao) : "—"}</td>
-                <td className="px-2">{c.difTotal !== null ? formatadorMoeda.format(c.difTotal) : "—"}</td>
+                <td className={`px-2 ${(c.difTotal ?? 0) < 0 ? "font-semibold text-semaforo-vermelho" : ""}`}>{c.difTotal !== null ? formatadorMoeda.format(c.difTotal) : "—"}</td>
               </tr>
             ))}
             <tr className="border-t border-ragga-blue/15 font-semibold text-ragga-blue-dark">
-              <td className="py-1.5 pr-3">Total da loja</td>
-              <td colSpan={3} />
+              <td className="py-1.5 pr-3">Total da loja (DIF. TOTAL)</td>
+              <td colSpan={5} />
               <td className="px-2">{formatadorMoeda.format(total)}</td>
-              <td colSpan={2} />
             </tr>
           </tbody>
         </table>

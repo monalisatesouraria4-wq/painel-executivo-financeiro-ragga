@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agruparMotivos, diasDoIntervalo, montarPeriodoCompraDireta, statusDoPercentual } from "@/lib/services/compraDiretaPainel";
+import { agruparMotivos, diasDoIntervalo, ehAjusteSemSaidaDeCaixa, montarPeriodoCompraDireta, statusDoPercentual } from "@/lib/services/compraDiretaPainel";
 
 describe("status de Compra Direta (thresholds existentes)", () => {
   it("até 5% controlado; 5–7% atenção; acima de 7% crítico", () => {
@@ -130,5 +130,67 @@ describe("composição por motivo de cada dia (clique no gráfico)", () => {
     const bg02 = p.porLoja.find((l) => l.unidade === "BG 02")!.diario[0];
     expect(bg02.motivos).toEqual([{ motivo: "CMO/FREE", valor: 25 }, { motivo: "CMV", valor: 5 }]);
     expect(bg02.motivos.reduce((s, m) => s + m.valor, 0)).toBe(bg02.valor);
+  });
+});
+
+describe("Nota Fiscal = ajuste sem saída de caixa (fora da retirada financeira)", () => {
+  const fat = [
+    { codigo: "BG 01", data: "2026-09-01", valor: 10000 },
+    { codigo: "BG 02", data: "2026-09-01", valor: 10000 },
+  ];
+  const linhas = [
+    { codigo: "BG 01", data: "2026-09-01", motivo: "CMV", valor: 400 },
+    { codigo: "BG 01", data: "2026-09-01", motivo: "NOTA FISCAL", valor: 600 }, // não é retirada real
+    { codigo: "BG 02", data: "2026-09-01", motivo: "CMO/FREE", valor: 200 },
+    { codigo: "BG 02", data: "2026-09-01", motivo: "Nota Fiscal ", valor: 50 }, // variação de caixa/espaço
+  ];
+  const p = montarPeriodoCompraDireta("2026-09-01", "2026-09-01", fat, linhas);
+
+  it("reconhece a classificação sem depender de caixa, espaços ou acento", () => {
+    expect(ehAjusteSemSaidaDeCaixa("NOTA FISCAL")).toBe(true);
+    expect(ehAjusteSemSaidaDeCaixa("  nota fiscal ")).toBe(true);
+    expect(ehAjusteSemSaidaDeCaixa("CMV")).toBe(false);
+    expect(ehAjusteSemSaidaDeCaixa("MATERIAL DE LIMPEZA")).toBe(false);
+  });
+
+  it("total de retiradas financeiras EXCLUI Nota Fiscal; ajustes têm indicador próprio; total lançado = soma das duas", () => {
+    expect(p.valor).toBe(600); // 400 + 200
+    expect(p.ajustesSemSaida).toBe(650); // 600 + 50
+    expect(p.totalLancado).toBe(1250);
+    expect(p.totalLancado).toBe(linhas.reduce((s, l) => s + l.valor, 0)); // nada some nem duplica
+  });
+
+  it("% sobre o faturamento, status e ranking usam só a retirada financeira", () => {
+    expect(p.percentual).toBeCloseTo((600 / 20000) * 100, 6);
+    const bg01 = p.porLoja.find((l) => l.unidade === "BG 01")!;
+    expect(bg01.valor).toBe(400);
+    expect(bg01.percentual).toBeCloseTo(4, 6); // sem NF seria 10% (crítico)
+    expect(bg01.status).toBe("controlado");
+    expect(bg01.ajustesSemSaida).toBe(600);
+    // a loja com mais "valor lançado" (BG 01 = 1.000) NÃO passa a ser a de maior retirada financeira
+    const maior = [...p.porLoja].sort((a, b) => b.valor - a.valor)[0];
+    expect(maior.unidade).toBe("BG 01"); // 400 > 200 só pela retirada real
+    expect(p.porLoja.find((l) => l.unidade === "BG 02")!.valor).toBe(200);
+  });
+
+  it("os motivos exibidos são só os que existem nos dados (retirada financeira); Nota Fiscal fica separada, sem inventar categorias", () => {
+    expect(p.motivos.map((m) => m.motivo).sort()).toEqual(["CMO/FREE", "CMV"]);
+    expect(p.motivos.reduce((s, m) => s + m.valor, 0)).toBe(p.valor);
+    expect(p.motivos.some((m) => m.motivo.toUpperCase().includes("LIMPEZA"))).toBe(false);
+    expect(p.diario[0].valor).toBe(600);
+  });
+
+  it("totais consistentes: rede = soma das lojas (financeiro e ajustes)", () => {
+    expect(p.porLoja.reduce((s, l) => s + l.valor, 0)).toBe(p.valor);
+    expect(p.porLoja.reduce((s, l) => s + l.ajustesSemSaida, 0)).toBe(p.ajustesSemSaida);
+  });
+
+  it("período só com Nota Fiscal: há dados, mas retirada financeira = 0 (nunca vira retirada real)", () => {
+    const so = montarPeriodoCompraDireta("2026-09-01", "2026-09-01", [{ codigo: "BG 01", data: "2026-09-01", valor: 5000 }], [{ codigo: "BG 01", data: "2026-09-01", motivo: "NOTA FISCAL", valor: 300 }]);
+    expect(so.disponivel).toBe(true);
+    expect(so.valor).toBe(0);
+    expect(so.ajustesSemSaida).toBe(300);
+    expect(so.totalLancado).toBe(300);
+    expect(so.percentual).toBe(0);
   });
 });

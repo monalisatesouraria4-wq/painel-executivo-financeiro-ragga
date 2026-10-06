@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import ExcelJS from "exceljs";
 import { processarArquivoBase } from "@/lib/services/atualizacaoBases";
 import type { RegistroBase } from "@/lib/import/tipos";
+
+// Estes testes usam dados FICTÍCIOS (ex.: "MATERIAL DE LIMPEZA", R$ 999). Se houver DATABASE_URL no ambiente, a
+// orquestração gravaria esses registros no banco REAL (foi assim que uma linha fictícia chegou à Compra Direta em
+// 03/10). A persistência é desligada aqui: `null` = "sem banco", e o fluxo em memória (o que se testa) segue igual.
+vi.mock("@/lib/actions/persistirBase", () => ({ persistirBaseNoBanco: async () => null }));
 
 /**
  * Testes de integração REAIS da camada de orquestração da Atualização

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useRef, useState, useEffect, useTransition } from "react";
-import { Secao, Item, Situacao, VarCelulas, VariacaoPp, moeda, pct } from "@/components/ui/PainelAnalitico";
+import { Secao, Item, VarCelulas, VariacaoPp, moeda, pct } from "@/components/ui/PainelAnalitico";
 import { dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import { periodoComparacaoPadrao } from "@/lib/rules/mesAnterior";
 import type { QuebraDetalheLinha } from "@/lib/services/controlesCaixa";
@@ -9,7 +9,10 @@ import {
   agregarQuebra,
   ordenarLojasQuebra,
   recortarLoja,
+  situacaoLojaQuebra,
+  situacaoQuebraDetalhada,
   type LojaQuebra,
+  type SituacaoQuebraDetalhada,
   type MotivoQuebra,
   type OperadorQuebra,
   type OrdemQuebra,
@@ -33,6 +36,20 @@ const completa = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && Number(v.slice(
 const diaBR = (isoStr: string) => `${isoStr.slice(8, 10)}/${isoStr.slice(5, 7)}/${isoStr.slice(0, 4)}`;
 
 type OrdemUI = OrdemQuebra;
+
+/** Selo da situação do comparativo de Quebra: Melhorou / Piorou / Estável / Sem ocorrência / Sem base de comparação. */
+function SituacaoQuebraBadge({ situacao }: { situacao: SituacaoQuebraDetalhada }) {
+  if (situacao === "melhorou") return <span className="whitespace-nowrap text-xs font-semibold text-semaforo-verde">🟢 Melhorou</span>;
+  if (situacao === "piorou") return <span className="whitespace-nowrap text-xs font-semibold text-semaforo-vermelho">🔴 Piorou</span>;
+  if (situacao === "estavel") return <span className="whitespace-nowrap text-xs font-semibold text-foreground/55">⚪ Estável</span>;
+  if (situacao === "sem-ocorrencia") return <span className="whitespace-nowrap text-xs font-semibold text-foreground/45">⚪ Sem ocorrência</span>;
+  return <span className="whitespace-nowrap text-xs font-semibold text-foreground/45">⚪ Sem base de comparação</span>;
+}
+
+/** Situação por VALOR (operador e motivo): `temBase` = a base cobre o período comparado; ausente no comparado = R$ 0,00. */
+function situacaoPorValor(atual: number, comparado: number, temBase: boolean): SituacaoQuebraDetalhada {
+  return situacaoQuebraDetalhada({ valorAtual: atual, valorComparado: temBase ? comparado : null, metricaAtual: atual, metricaComparada: temBase ? comparado : null, baseValida: temBase });
+}
 
 function chaveOperador(o: { operador: string; cpf: string }) {
   return `${o.cpf}||${o.operador}`;
@@ -95,8 +112,10 @@ export function QuebraLojasPainel({
     );
   }
 
-  const lojasOrdenadas = ordenarLojasQuebra(atual.porLoja, comparacao, ordem);
-  const temBaseRede = !!comparacao && comparacao.disponivel;
+  // Base válida: o período comparado tem registros de Quebra OU a base de Quebra o cobre (começa até o fim dele) — nesse
+  // caso, ausência de quebra é "sem ocorrência" real, não falta de dado.
+  const temBaseRede = !!comparacao && (comparacao.disponivel || (!!dados && dados.quebraDesde !== null && dados.quebraDesde <= compFim));
+  const lojasOrdenadas = ordenarLojasQuebra(atual.porLoja, comparacao, ordem, temBaseRede);
   const periodoAtualTxt = `${formatadorDia.format(janela.inicio)} a ${formatadorDia.format(janela.fim)}`;
   const periodoCompTxt = compInicio && compFim ? `${diaBR(compInicio)} a ${diaBR(compFim)}` : "—";
   const quebraDesde = dados?.quebraDesde ?? null;
@@ -171,7 +190,20 @@ export function QuebraLojasPainel({
             <Item rotulo="% comparado" valor={temBaseRede && comparacao ? `${pct.format(comparacao.percentual)}%` : "—"} />
             <Item rotulo="Variação R$" valor={temBaseRede && comparacao ? `${atual.valor - comparacao.valor >= 0 ? "+" : "-"}${moeda.format(Math.abs(atual.valor - comparacao.valor))}` : "—"} />
             <Item rotulo="Variação p.p." valor={temBaseRede && comparacao ? <VariacaoPp atual={atual.percentual} anterior={comparacao.percentual} interpretar /> : "—"} />
-            <Item rotulo="Situação" valor={<Situacao atual={atual.percentual} anterior={comparacao?.percentual ?? 0} temBase={temBaseRede} />} />
+            <Item
+              rotulo="Situação"
+              valor={
+                <SituacaoQuebraBadge
+                  situacao={situacaoQuebraDetalhada({
+                    valorAtual: atual.valor,
+                    valorComparado: temBaseRede && comparacao ? comparacao.valor : null,
+                    metricaAtual: atual.percentual,
+                    metricaComparada: temBaseRede && comparacao ? comparacao.percentual : null,
+                    baseValida: temBaseRede,
+                  })}
+                />
+              }
+            />
           </div>
         )}
         {notaCobertura && <p className="mb-3 text-[11px] text-foreground/50">⚠️ {notaCobertura}</p>}
@@ -217,7 +249,7 @@ export function QuebraLojasPainel({
                         <td className="px-3 py-3 text-foreground/70">{temBase ? `${dRs >= 0 ? "+" : "-"}${moeda.format(Math.abs(dRs))}` : "—"}</td>
                         <td className="px-3 py-3">{temBase && c ? <VariacaoPp atual={l.percentual} anterior={c.percentual} interpretar /> : "—"}</td>
                         <td className="px-3 py-3">
-                          <Situacao atual={l.percentual} anterior={c?.percentual ?? 0} temBase={temBase} />
+                          <SituacaoQuebraBadge situacao={situacaoLojaQuebra(l, c, temBaseRede)} />
                         </td>
                       </tr>
                       {aberta && (
@@ -235,7 +267,7 @@ export function QuebraLojasPainel({
           </table>
         </div>
         <p className="mt-2 text-[11px] text-foreground/40">
-          Status = situação do % de quebra sobre o faturamento contra o período comparado (menor = 🟢 melhorou · maior = 🔴 piorou · ⚪ sem alteração). Não há meta/limite de Quebra cadastrado.
+          Status = situação do % de quebra sobre o faturamento contra o período comparado: 🟢 Melhorou (diminuiu) · 🔴 Piorou (aumentou) · ⚪ Estável (igual no arredondamento) · ⚪ Sem ocorrência (nenhuma quebra nos dois períodos) · ⚪ Sem base de comparação. Não há meta/limite de Quebra cadastrado.
         </p>
       </Secao>
 
@@ -290,7 +322,7 @@ function TabelaMotivos({ atual, comparado, temBase }: { atual: MotivoQuebra[]; c
                 <td className="px-3">{temBase ? `${pct.format(l.c?.percentualDoTotal ?? 0)}%` : "—"}</td>
                 {temBase ? <VarCelulas atual={va} anterior={vc} interpretar /> : semBase}
                 <td className="px-3">
-                  <Situacao atual={va} anterior={vc} temBase={temBase} />
+                  <SituacaoQuebraBadge situacao={situacaoPorValor(va, vc, temBase)} />
                 </td>
               </tr>
             );
@@ -303,7 +335,7 @@ function TabelaMotivos({ atual, comparado, temBase }: { atual: MotivoQuebra[]; c
             <td className="px-3">{temBase ? `${pct.format(100)}%` : "—"}</td>
             {temBase ? <VarCelulas atual={totA} anterior={totC} interpretar /> : semBase}
             <td className="px-3">
-              <Situacao atual={totA} anterior={totC} temBase={temBase} />
+              <SituacaoQuebraBadge situacao={situacaoPorValor(totA, totC, temBase)} />
             </td>
           </tr>
         </tbody>
@@ -391,7 +423,7 @@ function DetalheLoja({
                         </>
                       )}
                       <td className="px-2">
-                        <Situacao atual={va} anterior={vc} temBase={temBase} />
+                        <SituacaoQuebraBadge situacao={situacaoPorValor(va, vc, temBase)} />
                       </td>
                     </tr>
                   );
@@ -405,7 +437,7 @@ function DetalheLoja({
                   <td className="px-2">{temBase ? moeda.format(totOpC) : "Sem dados"}</td>
                   <td colSpan={2} />
                   <td className="px-2">
-                    <Situacao atual={loja.percentual} anterior={compLoja?.percentual ?? 0} temBase={temBase} />
+                    <SituacaoQuebraBadge situacao={situacaoLojaQuebra(loja, compLoja, temBase)} />
                   </td>
                 </tr>
               </tbody>

@@ -4,11 +4,22 @@ import { useMemo } from "react";
 import type { CodigoUnidade } from "@painel/shared";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { Item, Situacao, moeda as moedaPainel, pct as pctPainel } from "@/components/ui/PainelAnalitico";
+import { Item, Secao, Situacao, moeda as moedaPainel, pct as pctPainel } from "@/components/ui/PainelAnalitico";
 import { PainelLojasComparativo, useComparacaoPeriodo, formatadorDiaPainel } from "./PainelLojasComparativo";
 import { semanaRealDoPeriodo } from "@/lib/rules/datas";
 import { buscarTrocoIntervalo } from "@/lib/actions/buscarTrocoIntervalo";
 import type { ControlesCaixaData } from "@/lib/services/controlesCaixa";
+import {
+  ROTULO_SEM_VALOR_CONFERENCIA,
+  ROTULO_TIPO_SEM_VALOR,
+  caixasComLoja,
+  classificarCaixaTroco,
+  lojasSemValorDeConferencia,
+  rankingFaltasPorLoja,
+  resumirTroco,
+  tipoSemValorDoCaixa,
+  tipoSemValorPorLojaData,
+} from "@/lib/services/trocoIndicadores";
 import { agregarTroco, recortarLojaPainel, redeTroco, type DetalheTroco, type MetricaLoja } from "@/lib/services/controlesLojaPainel";
 
 /**
@@ -24,6 +35,10 @@ import { agregarTroco, recortarLojaPainel, redeTroco, type DetalheTroco, type Me
  *
  * Chave mantida exatamente como já validada e documentada:
  * unidade_id + data + caixa — não alterada aqui.
+ *
+ * Classificação (ver `trocoIndicadores.ts`; só na camada de cálculo, nada gravado): "Sem valor de conferência
+ * registrado" = conferido 0 E informado 0 (marcador operacional INFERIDO — a base não tem campo explícito de
+ * conferência realizada); "Conferido" = conferido ≠ 0 E informado ≠ 0 E diferença 0; "Divergência" = diferença ≠ 0.
  */
 const TOM_POR_STATUS: Record<string, "ok" | "warn" | "alert"> = {
   "Conferido": "ok",
@@ -68,12 +83,19 @@ export function TrocoTab({
   );
 
   const todasCaixas = useMemo(() => linhas.flatMap((l) => l.caixas), [linhas]);
-  const conferidos = todasCaixas.filter((c) => c.status === "Conferido").length;
+  const caixasLoja = useMemo(() => caixasComLoja(linhas), [linhas]);
+  const resumo = useMemo(() => resumirTroco(caixasLoja), [caixasLoja]);
+  const rankingFaltas = useMemo(() => rankingFaltasPorLoja(caixasLoja), [caixasLoja]);
+  const lojasSemValor = useMemo(() => lojasSemValorDeConferencia(caixasLoja), [caixasLoja]);
+  // "Caixas conferidos" = só conferido ≠ 0 e informado ≠ 0 com diferença 0 (os 0/0 NÃO entram).
+  const conferidos = resumo.conferidos;
   const comDivergencia = todasCaixas.filter((c) => c.status === "Divergência").length;
   const valorTotalDivergencias = todasCaixas
     .filter((c) => c.status === "Divergência")
     .reduce((s, c) => s + Math.abs(c.diferenca), 0);
   const percentualDivergencia = todasCaixas.length > 0 ? (comDivergencia / todasCaixas.length) * 100 : 0;
+  // Valor da falta (só diferença negativa) e caixas sem valor de conferência registrado (0/0).
+  const valorEncaminhadoParaQuebra = resumo.faltas.valor;
 
   const periodo =
     todasCaixas.length > 0
@@ -98,10 +120,11 @@ export function TrocoTab({
       ) : (
         <>
           {/* Resumo */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Card>
               <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Caixas conferidos</p>
               <p className="mt-1 text-2xl font-semibold text-ragga-blue-dark">{conferidos}</p>
+              <p className="mt-2 text-xs text-foreground/50">Conferido e informado ≠ 0,00 e diferença 0,00 (os 0/0 não entram)</p>
             </Card>
             <Card>
               <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Caixas com divergência</p>
@@ -115,7 +138,99 @@ export function TrocoTab({
               <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">% de caixas com divergência</p>
               <p className="mt-1 text-2xl font-semibold text-ragga-blue-dark">{formatadorPercentual.format(percentualDivergencia)}%</p>
             </Card>
+            <Card>
+              <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Valor encaminhado para quebra</p>
+              <p className="mt-1 text-2xl font-semibold text-ragga-blue-dark">{formatadorMoeda.format(valorEncaminhadoParaQuebra)}</p>
+              <p className="mt-2 text-xs text-foreground/50">
+                Valor da falta (diferença negativa): {resumo.faltas.quantidade} {resumo.faltas.quantidade === 1 ? "ocorrência" : "ocorrências"}; sobras não entram
+              </p>
+              <p className="mt-1 text-xs text-foreground/50">
+                Com plano de ação de quebra registrado: {formatadorMoeda.format(resumo.faltasComPlanoDeQuebra.valor)} ({resumo.faltasComPlanoDeQuebra.quantidade})
+              </p>
+            </Card>
+            <Card>
+              <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">{ROTULO_SEM_VALOR_CONFERENCIA}</p>
+              <p className="mt-1 text-2xl font-semibold text-ragga-blue-dark">{resumo.semValor}</p>
+              <p className="mt-2 text-xs text-foreground/50">Conferido e informado = 0,00. Inferência da base — não prova que a conferência não ocorreu</p>
+            </Card>
           </div>
+
+          <Secao titulo="Maiores divergências de troco (faltas)">
+            {rankingFaltas.length === 0 ? (
+              <p className="text-sm text-foreground/45">Nenhuma falta (diferença negativa) no período.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm tabular-nums">
+                  <thead>
+                    <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                      <th className="py-2 pr-4">Ranking</th>
+                      <th className="px-3 py-2">Loja</th>
+                      <th className="px-3 py-2">Valor da falta</th>
+                      <th className="px-3 py-2">Quantidade de ocorrências</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rankingFaltas.map((l, i) => (
+                      <tr key={l.unidade} className="border-b border-ragga-blue/5">
+                        <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">{i + 1}º</td>
+                        <td className="px-3 font-medium text-ragga-blue-dark">{l.unidade}</td>
+                        <td className="px-3 font-semibold text-semaforo-vermelho">{formatadorMoeda.format(l.valorFalta)}</td>
+                        <td className="px-3">{l.ocorrencias}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-ragga-blue/20 font-bold text-ragga-blue-dark">
+                      <td className="py-2.5 pr-4" colSpan={2}>TOTAL</td>
+                      <td className="px-3">{formatadorMoeda.format(resumo.faltas.valor)}</td>
+                      <td className="px-3">{resumo.faltas.quantidade}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="mt-2 text-[11px] text-foreground/40">Só diferenças negativas (conferido &lt; informado). Sobras positivas não entram. Ordenado pela maior falta financeira.</p>
+          </Secao>
+
+          <Secao titulo="Lojas sem valor de conferência registrado">
+            {lojasSemValor.length === 0 ? (
+              <p className="text-sm text-foreground/45">Nenhum caixa com conferido e informado = 0,00 no período.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm tabular-nums">
+                  <thead>
+                    <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                      <th className="py-2 pr-4">Loja</th>
+                      <th className="px-3 py-2">Caixas sem valor de conferência</th>
+                      <th className="px-3 py-2">Total de caixas</th>
+                      <th className="px-3 py-2">% sem valor de conferência</th>
+                      <th className="px-3 py-2">{ROTULO_TIPO_SEM_VALOR["loja-inteira"]}</th>
+                      <th className="px-3 py-2">{ROTULO_TIPO_SEM_VALOR["caixa-isolado"]}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lojasSemValor.map((l) => (
+                      <tr key={l.unidade} className="border-b border-ragga-blue/5">
+                        <td className="py-2.5 pr-4 font-medium text-ragga-blue-dark">{l.unidade}</td>
+                        <td className="px-3 font-semibold">{l.semValor}</td>
+                        <td className="px-3">{l.total}</td>
+                        <td className="px-3">{pctPainel.format(l.percentual)}%</td>
+                        <td className="px-3">{l.caixasEmLojaInteira}</td>
+                        <td className="px-3">{l.caixasIsolados}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-ragga-blue/20 font-bold text-ragga-blue-dark">
+                      <td className="py-2.5 pr-4">TOTAL</td>
+                      <td className="px-3">{lojasSemValor.reduce((s, l) => s + l.semValor, 0)}</td>
+                      <td className="px-3">{lojasSemValor.reduce((s, l) => s + l.total, 0)}</td>
+                      <td className="px-3" colSpan={3} />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="mt-2 text-[11px] text-foreground/40">
+              Conferido e informado = 0,00. É uma inferência da estrutura da base (não existe campo explícito de conferência realizada). Loja inteira = todos os caixas da loja na data estão 0/0; caixa isolado = só parte deles. Ordenado pela maior quantidade de caixas.
+            </p>
+          </Secao>
 
           {/* Tabela principal por loja (REDE → LOJA → caixas) com comparativo */}
           <PainelLojasComparativo<DetalheTroco>
@@ -165,6 +280,7 @@ function DetalheTrocoLoja({
   periodoComp: string;
 }) {
   const caixas = loja.detalhe.caixas;
+  const tiposSemValor = tipoSemValorPorLojaData(caixas.map((c) => ({ ...c, unidade: loja.unidade })));
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-6">
@@ -197,7 +313,19 @@ function DetalheTrocoLoja({
               <td className="px-2 py-1.5">{formatadorMoeda.format(caixa.informado)}</td>
               <td className={`px-2 py-1.5 ${caixa.status === "Divergência" ? "font-semibold text-semaforo-vermelho" : ""}`}>{formatadorMoeda.format(caixa.diferenca)}</td>
               <td className="px-2 py-1.5">
-                <StatusBadge tom={TOM_POR_STATUS[caixa.status]} texto={caixa.status} />
+                {classificarCaixaTroco(caixa) === "sem-valor" ? (
+                  <>
+                    <StatusBadge tom="warn" texto={ROTULO_SEM_VALOR_CONFERENCIA} />
+                    <span className="mt-0.5 block text-[10px] text-foreground/45">
+                      {(() => {
+                        const t = tipoSemValorDoCaixa({ ...caixa, unidade: loja.unidade }, tiposSemValor);
+                        return t ? ROTULO_TIPO_SEM_VALOR[t] : "";
+                      })()}
+                    </span>
+                  </>
+                ) : (
+                  <StatusBadge tom={TOM_POR_STATUS[caixa.status]} texto={caixa.status} />
+                )}
               </td>
               <td className="px-2 py-1.5">{caixa.operador ?? "—"}</td>
               <td className="px-2 py-1.5">{caixa.planoDeAcao ?? "—"}</td>

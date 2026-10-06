@@ -17,6 +17,7 @@ import {
   type PeriodoCompraDireta,
   type StatusCompraDireta,
   compararMotivos,
+  ROTULO_AJUSTE_SEM_SAIDA,
   situacaoCompraDireta,
   variacaoCompraDireta,
 } from "@/lib/services/compraDiretaPainel";
@@ -39,13 +40,17 @@ interface Escopo {
   cor: LojaCompraDireta["cor"];
   motivos: MotivoCompraDireta[];
   diario: DiaCompraDireta[];
+  /** Ajustes sem saída de caixa ("NOTA FISCAL") — fora de `valor`. */
+  ajustesSemSaida: number;
+  /** Total lançado = retirada financeira + ajustes sem saída de caixa. */
+  totalLancado: number;
 }
 
 function escopoDe(periodo: PeriodoCompraDireta, loja: string): Escopo {
   if (loja === "TODAS") return periodo;
   const l = periodo.porLoja.find((x) => x.unidade === loja);
-  if (!l) return { disponivel: false, faturamento: 0, valor: 0, percentual: 0, status: "controlado", cor: "verde", motivos: [], diario: [] };
-  return { disponivel: l.valor > 0 || l.motivos.length > 0, ...l };
+  if (!l) return { disponivel: false, faturamento: 0, valor: 0, percentual: 0, status: "controlado", cor: "verde", motivos: [], diario: [], ajustesSemSaida: 0, totalLancado: 0 };
+  return { disponivel: l.valor > 0 || l.motivos.length > 0 || l.ajustesSemSaida > 0, ...l, totalLancado: Math.round((l.valor + l.ajustesSemSaida) * 100) / 100 };
 }
 
 type Formato = "moeda" | "pp";
@@ -381,7 +386,7 @@ export function CompraDiretaPainel({
       )}
 
       {/* 1) RESULTADO — cards principais */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <CardGrande titulo="Faturamento">
           <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">{atual.disponivel ? moeda.format(atual.faturamento) : "—"}</p>
           {podeComparar ? (
@@ -402,6 +407,7 @@ export function CompraDiretaPainel({
           <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">{atual.disponivel ? moeda.format(atual.valor) : "—"}</p>
           {atual.disponivel ? (
             <div className="mt-2 space-y-0.5 text-xs text-foreground/60">
+              <p className="text-foreground/45">Retirada financeira real — exclui Nota Fiscal</p>
               <p>
                 <span className="font-semibold tabular-nums">{pct.format(atual.percentual)}%</span> do faturamento
               </p>
@@ -444,6 +450,30 @@ export function CompraDiretaPainel({
                   </p>
                   <p>
                     Variação: <TextoVariacao atual={atual.percentual} anterior={comp.percentual} formato="pp" interpretar />
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-foreground/45">Sem dados no período</p>
+          )}
+        </CardGrande>
+
+        <CardGrande titulo="Ajustes sem saída de caixa">
+          <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">{atual.disponivel ? moeda.format(atual.ajustesSemSaida) : "—"}</p>
+          {atual.disponivel ? (
+            <div className="mt-2 space-y-0.5 text-xs text-foreground/60">
+              <p className="text-foreground/45">{ROTULO_AJUSTE_SEM_SAIDA} — não é saída real de caixa</p>
+              <p>
+                Total lançado em Compra Direta: <span className="font-semibold tabular-nums">{moeda.format(atual.totalLancado)}</span>
+              </p>
+              {comp.disponivel && (
+                <>
+                  <p className="pt-1">
+                    Comparado: <span className="font-semibold tabular-nums">{moeda.format(comp.ajustesSemSaida)}</span>
+                  </p>
+                  <p>
+                    Variação: <TextoVariacao atual={atual.ajustesSemSaida} anterior={comp.ajustesSemSaida} />
                   </p>
                 </>
               )}
@@ -504,17 +534,23 @@ export function CompraDiretaPainel({
                 <td className="px-3">{comp.disponivel ? moeda.format(comp.valor) : "Sem dados"}</td>
                 <td className="px-3">{podeComparar ? <TextoVariacao atual={atual.valor} anterior={comp.valor} interpretar /> : "—"}</td>
               </tr>
-              <tr>
+              <tr className="border-b border-ragga-blue/5">
                 <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">% sobre faturamento</td>
                 <td className="px-3">{atual.disponivel ? `${pct.format(atual.percentual)}%` : "Sem dados"}</td>
                 <td className="px-3">{comp.disponivel ? `${pct.format(comp.percentual)}%` : "Sem dados"}</td>
                 <td className="px-3">{podeComparar ? <TextoVariacao atual={atual.percentual} anterior={comp.percentual} formato="pp" interpretar /> : "—"}</td>
               </tr>
+              <tr>
+                <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">Ajustes sem saída de caixa</td>
+                <td className="px-3">{atual.disponivel ? moeda.format(atual.ajustesSemSaida) : "Sem dados"}</td>
+                <td className="px-3">{comp.disponivel ? moeda.format(comp.ajustesSemSaida) : "Sem dados"}</td>
+                <td className="px-3">{podeComparar ? <TextoVariacao atual={atual.ajustesSemSaida} anterior={comp.ajustesSemSaida} /> : "—"}</td>
+              </tr>
             </tbody>
           </table>
         </div>
         <p className="mt-2 text-[11px] text-foreground/40">
-          Compra Direta e % sobre faturamento: redução = melhora (verde), aumento = piora (vermelho). Faturamento: apenas a variação matemática.
+          Compra Direta e % sobre faturamento: redução = melhora (verde), aumento = piora (vermelho). Faturamento e Ajustes sem saída de caixa (Nota Fiscal): apenas a variação matemática — Nota Fiscal não é retirada financeira.
         </p>
       </Secao>
 
@@ -528,7 +564,7 @@ export function CompraDiretaPainel({
             <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt}
           </p>
         </div>
-        {linhasMotivoRede.length === 0 ? (
+        {linhasMotivoRede.length === 0 && atual.ajustesSemSaida === 0 && comp.ajustesSemSaida === 0 ? (
           <p className="text-sm text-foreground/45">Sem dados nos períodos.</p>
         ) : (
           <div className="overflow-x-auto">
@@ -551,17 +587,29 @@ export function CompraDiretaPainel({
                   </tr>
                 ))}
                 <tr className="border-t-2 border-ragga-blue/20 font-bold text-ragga-blue-dark">
-                  <td className="py-2.5 pr-4">TOTAL</td>
+                  <td className="py-2.5 pr-4">TOTAL DE RETIRADAS FINANCEIRAS</td>
                   <td className="px-3">{moeda.format(totalMotivosAtual)}</td>
                   <td className="px-3">{comp.disponivel ? moeda.format(totalMotivosComp) : "Sem dados"}</td>
                   <td className="px-3">{comp.disponivel ? <VariacaoMotivo atual={totalMotivosAtual} comparado={totalMotivosComp} /> : "—"}</td>
+                </tr>
+                <tr className="border-t border-ragga-blue/10 text-foreground/70">
+                  <td className="py-2.5 pr-4 font-medium">{ROTULO_AJUSTE_SEM_SAIDA}</td>
+                  <td className="px-3">{moeda.format(atual.ajustesSemSaida)}</td>
+                  <td className="px-3">{comp.disponivel ? moeda.format(comp.ajustesSemSaida) : "Sem dados"}</td>
+                  <td className="px-3">{comp.disponivel ? <TextoVariacao atual={atual.ajustesSemSaida} anterior={comp.ajustesSemSaida} /> : "—"}</td>
+                </tr>
+                <tr className="border-t border-ragga-blue/10 font-bold text-ragga-blue-dark">
+                  <td className="py-2.5 pr-4">TOTAL LANÇADO EM COMPRA DIRETA</td>
+                  <td className="px-3">{moeda.format(atual.totalLancado)}</td>
+                  <td className="px-3">{comp.disponivel ? moeda.format(comp.totalLancado) : "Sem dados"}</td>
+                  <td className="px-3">{comp.disponivel ? <TextoVariacao atual={atual.totalLancado} anterior={comp.totalLancado} /> : "—"}</td>
                 </tr>
               </tbody>
             </table>
           </div>
         )}
         <p className="mt-2 text-[11px] text-foreground/40">
-          Percentual calculado sobre o valor do período comparado. 🔴 aumento da retirada = piorou · 🟢 redução = melhorou · ⚪ sem alteração.
+          Percentual calculado sobre o valor do período comparado. 🔴 aumento da retirada = piorou · 🟢 redução = melhorou · ⚪ sem alteração. Nota Fiscal é ajuste sem saída de caixa: fica fora do total de retiradas financeiras e só tem variação factual.
         </p>
       </Secao>
 
@@ -719,7 +767,7 @@ function DetalheLoja({
 }) {
   const [modo, setModo] = useState<"valor" | "percentual">("valor");
   // "Sem dados" no período comparado só quando a loja nem operou (sem faturamento) nem retirou.
-  const temComp = !!compLoja && (compLoja.faturamento > 0 || compLoja.valor > 0);
+  const temComp = !!compLoja && (compLoja.faturamento > 0 || compLoja.valor > 0 || compLoja.ajustesSemSaida > 0);
 
   const linhasMotivo = compararMotivos(loja.motivos, compLoja?.motivos ?? []);
   const totalAtual = loja.motivos.reduce((s, m) => s + m.valor, 0);
@@ -729,9 +777,10 @@ function DetalheLoja({
     <div className="space-y-6">
       <div>
         <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">Resumo da loja</p>
-        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-7">
           <Item rotulo="Faturamento" valor={moeda.format(loja.faturamento)} />
           <Item rotulo="Compra Direta" valor={moeda.format(loja.valor)} />
+          <Item rotulo="Ajustes sem saída de caixa" valor={moeda.format(loja.ajustesSemSaida)} />
           <Item rotulo="% sobre faturamento" valor={`${pct.format(loja.percentual)}%`} />
           <Item rotulo="Limite saudável" valor={`${pct.format(LIMITE_SAUDAVEL_COMPRA_DIRETA)}%`} />
           <Item rotulo="Distância do limite" valor={distanciaTexto(loja.percentual)} />
@@ -786,7 +835,7 @@ function DetalheLoja({
         <p className="mb-2 text-[11px] text-foreground/45">
           Participação = valor do motivo ÷ total de Compra Direta da loja no período (não é sobre o faturamento). Valor menor = 🟢 melhorou; maior = 🔴 piorou.
         </p>
-        {linhasMotivo.length === 0 ? (
+        {linhasMotivo.length === 0 && loja.ajustesSemSaida === 0 && (compLoja?.ajustesSemSaida ?? 0) === 0 ? (
           <p className="text-sm text-foreground/45">Sem retiradas nos períodos.</p>
         ) : (
           <div className="overflow-x-auto">
@@ -836,7 +885,7 @@ function DetalheLoja({
                   );
                 })}
                 <tr className="border-t border-ragga-blue/15 font-semibold text-ragga-blue-dark">
-                  <td className="py-1.5 pr-3">Total</td>
+                  <td className="py-1.5 pr-3">Total de retiradas financeiras</td>
                   <td className="px-2">
                     {moeda.format(totalAtual)}
                     <span className="block text-xs font-normal text-foreground/50">{pct.format(loja.motivos.reduce((s, m) => s + m.percentualDoTotal, 0))}%</span>
@@ -850,6 +899,20 @@ function DetalheLoja({
                   <td className="px-2">{temComp ? <TextoVariacao atual={totalAtual} anterior={totalComp} interpretar /> : "—"}</td>
                   <td className="px-2">{temComp ? <Situacao atual={totalAtual} anterior={totalComp} /> : "—"}</td>
                   <td />
+                </tr>
+                <tr className="border-t border-ragga-blue/10 text-foreground/70">
+                  <td className="py-1.5 pr-3 font-medium">{ROTULO_AJUSTE_SEM_SAIDA}</td>
+                  <td className="px-2">{moeda.format(loja.ajustesSemSaida)}</td>
+                  <td className="px-2">{temComp ? moeda.format(compLoja?.ajustesSemSaida ?? 0) : "Sem dados"}</td>
+                  <td className="px-2">{temComp ? <TextoVariacao atual={loja.ajustesSemSaida} anterior={compLoja?.ajustesSemSaida ?? 0} /> : "—"}</td>
+                  <td className="px-2 text-xs text-foreground/45">Variação factual</td>
+                  <td />
+                </tr>
+                <tr className="border-t border-ragga-blue/10 font-semibold text-ragga-blue-dark">
+                  <td className="py-1.5 pr-3">Total lançado em Compra Direta</td>
+                  <td className="px-2">{moeda.format(Math.round((totalAtual + loja.ajustesSemSaida) * 100) / 100)}</td>
+                  <td className="px-2">{temComp ? moeda.format(Math.round((totalComp + (compLoja?.ajustesSemSaida ?? 0)) * 100) / 100) : "Sem dados"}</td>
+                  <td colSpan={3} />
                 </tr>
               </tbody>
             </table>

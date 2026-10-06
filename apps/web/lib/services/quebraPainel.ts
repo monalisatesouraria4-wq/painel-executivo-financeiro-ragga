@@ -148,24 +148,69 @@ export function situacaoQuebra(atual: number, comparado: number | null): Situaca
   return variacaoCompraDireta(atual, comparado).situacao;
 }
 
+/**
+ * Situação detalhada do comparativo de QUEBRA (aba Quebra de Caixa). Separa o que antes caía todo em "Sem alteração":
+ * - melhorou: a métrica diminuiu contra o período comparado (loja/rede: % de quebra sobre o faturamento; operador e
+ *   motivo: valor);
+ * - piorou: a métrica aumentou;
+ * - estavel: há base nos dois períodos, houve quebra em pelo menos um, e a métrica é igual no arredondamento do painel
+ *   (2 casas decimais);
+ * - sem-ocorrencia: não houve quebra nos dois períodos (valor zero em ambos);
+ * - sem-base: não existe dado válido no período comparado (base não cobre o período ou o item não existe lá).
+ */
+export type SituacaoQuebraDetalhada = "melhorou" | "piorou" | "estavel" | "sem-ocorrencia" | "sem-base";
+
+export function situacaoQuebraDetalhada(e: {
+  /** valor (R$) de quebra no período atual. */
+  valorAtual: number;
+  /** valor (R$) no período comparado; `null` = o item não existe/não há dado válido no comparado. */
+  valorComparado: number | null;
+  /** métrica que decide melhorou/piorou, no atual (% sobre faturamento para loja/rede; valor para operador/motivo). */
+  metricaAtual: number;
+  metricaComparada: number | null;
+  /** a base de Quebra cobre o período comparado. */
+  baseValida: boolean;
+}): SituacaoQuebraDetalhada {
+  if (!e.baseValida || e.valorComparado === null || e.metricaComparada === null) return "sem-base";
+  const centavos = (v: number) => Math.round(v * 100);
+  if (centavos(e.valorAtual) === 0 && centavos(e.valorComparado) === 0) return "sem-ocorrencia";
+  const a = centavos(e.metricaAtual);
+  const c = centavos(e.metricaComparada);
+  if (a === c) return "estavel";
+  return a < c ? "melhorou" : "piorou";
+}
+
 export type OrdemQuebra = "loja" | "valor" | "percentual" | "performance";
 
-const PESO_SITUACAO: Record<SituacaoQuebra, number> = { piorou: 3, "sem-alteracao": 2, "sem-base": 1, melhorou: 0 };
+const PESO_SITUACAO_DETALHADA: Record<SituacaoQuebraDetalhada, number> = { piorou: 4, estavel: 3, "sem-ocorrencia": 2, "sem-base": 1, melhorou: 0 };
+
+/** Situação de uma loja (ou da rede) contra o comparado, pelo % sobre o faturamento. Loja ausente no comparado = sem base. */
+export function situacaoLojaQuebra(loja: LojaQuebra, comparada: LojaQuebra | null | undefined, baseValida: boolean): SituacaoQuebraDetalhada {
+  return situacaoQuebraDetalhada({
+    valorAtual: loja.valor,
+    valorComparado: comparada ? comparada.valor : null,
+    metricaAtual: loja.percentual,
+    metricaComparada: comparada ? comparada.percentual : null,
+    baseValida,
+  });
+}
 
 /**
  * Ordenação REAL do ranking de lojas. loja: A→Z; valor: maior quebra primeiro; percentual: maior % sobre o
  * faturamento primeiro; performance: piorou → sem alteração → sem base → melhorou (situação do % contra o período
  * comparado) e, dentro de cada grupo, maior piora (p.p.) primeiro.
  */
-export function ordenarLojasQuebra(lojas: LojaQuebra[], comparacao: PeriodoQuebra | null, ordem: OrdemQuebra): LojaQuebra[] {
+export function ordenarLojasQuebra(
+  lojas: LojaQuebra[],
+  comparacao: PeriodoQuebra | null,
+  ordem: OrdemQuebra,
+  /** a base de Quebra cobre o período comparado (padrão: o comparado tem registros). */
+  baseValida: boolean = !!comparacao && comparacao.disponivel
+): LojaQuebra[] {
   const compDe = (u: string) => comparacao?.porLoja.find((l) => l.unidade === u) ?? null;
-  const pctComp = (u: string): number | null => {
-    const c = compDe(u);
-    return comparacao && comparacao.disponivel && c ? c.percentual : comparacao && comparacao.disponivel ? 0 : null;
-  };
   const delta = (l: LojaQuebra) => {
-    const c = pctComp(l.unidade);
-    return c === null ? 0 : l.percentual - c;
+    const c = compDe(l.unidade);
+    return c ? l.percentual - c.percentual : 0;
   };
   return [...lojas].sort((a, b) => {
     switch (ordem) {
@@ -176,9 +221,9 @@ export function ordenarLojasQuebra(lojas: LojaQuebra[], comparacao: PeriodoQuebr
       case "percentual":
         return b.percentual - a.percentual || a.unidade.localeCompare(b.unidade);
       default: {
-        const sa = situacaoQuebra(a.percentual, pctComp(a.unidade));
-        const sb = situacaoQuebra(b.percentual, pctComp(b.unidade));
-        return PESO_SITUACAO[sb] - PESO_SITUACAO[sa] || delta(b) - delta(a) || b.percentual - a.percentual || a.unidade.localeCompare(b.unidade);
+        const sa = situacaoLojaQuebra(a, compDe(a.unidade), baseValida);
+        const sb = situacaoLojaQuebra(b, compDe(b.unidade), baseValida);
+        return PESO_SITUACAO_DETALHADA[sb] - PESO_SITUACAO_DETALHADA[sa] || delta(b) - delta(a) || b.percentual - a.percentual || a.unidade.localeCompare(b.unidade);
       }
     }
   });
