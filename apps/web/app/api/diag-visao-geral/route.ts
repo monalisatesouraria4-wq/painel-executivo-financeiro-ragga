@@ -1,8 +1,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { sql } from "drizzle-orm";
+import postgres from "postgres";
+import { and, between, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { faturamento } from "@/lib/db/schema";
+import { mesAnteriorCompleto } from "@/lib/rules/mesAnterior";
 import { buscarVisaoGeralPeriodo } from "@/lib/services/visaoGeral";
 import { buscarDesempenhoCaixa } from "@/lib/services/desempenhoCaixa.server";
 
@@ -22,7 +26,11 @@ import { buscarDesempenhoCaixa } from "@/lib/services/desempenhoCaixa.server";
  * `?token=`; qualquer outro caso → 404. O token nunca é devolvido nem registrado em log.
  *
  * Uso: /api/diag-visao-geral?inicio=2026-09-01&fim=2026-09-30   (header x-diag-token: <valor>)
- * Opcional: &so=ambiente|ping|contagem|visao|desempenho|ssr
+ * Opcional: &so=ambiente|ping|contagem|etapas|real|visao|desempenho|ssr   (sem `so`: tudo, exceto `visao` e `real`)
+ *   etapas → as consultas internas de `buscarVisaoGeralPeriodo` em paralelo, cada uma com cliente próprio e timeout de 5 s
+             (acrescente &seq=1 para rodar uma de cada vez)
+ *   real   → a própria `buscarVisaoGeralPeriodo` + fotografias de `pg_stat_activity` aos 4 s, 9 s e 13 s (mostra qual
+             consulta está pendente e em que espera)
  */
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -73,7 +81,7 @@ function erroLegivel(e: unknown): ErroLegivel {
 
 type Resultado = { ok: boolean; ms: number; detalhe?: unknown; erro?: ErroLegivel; timeout?: boolean };
 
-async function etapa(inicioDaRota: number, nome: string, fn: () => Promise<unknown>): Promise<Resultado> {
+async function etapa(inicioDaRota: number, nome: string, fn: () => Promise<unknown>, timeoutMs = TIMEOUT_ETAPA_MS): Promise<Resultado> {
   if (Date.now() - inicioDaRota > ORCAMENTO_TOTAL_MS) {
     return { ok: false, ms: 0, erro: { nome: "Ignorada", mensagem: `Orçamento total de ${ORCAMENTO_TOTAL_MS} ms esgotado antes de "${nome}".` } };
   }
@@ -81,7 +89,7 @@ async function etapa(inicioDaRota: number, nome: string, fn: () => Promise<unkno
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<never>((_, rej) => {
-      timer = setTimeout(() => rej(Object.assign(new Error(`timeout após ${TIMEOUT_ETAPA_MS} ms`), { name: "TimeoutDiagnostico" })), TIMEOUT_ETAPA_MS);
+      timer = setTimeout(() => rej(Object.assign(new Error(`timeout após ${timeoutMs} ms`), { name: "TimeoutDiagnostico" })), timeoutMs);
     });
     const detalhe = await Promise.race([fn(), timeout]);
     return { ok: true, ms: Date.now() - t0, detalhe };
@@ -115,6 +123,119 @@ function tokenConfere(esperado: string, recebido: string | null): boolean {
   return timingSafeEqual(a, b);
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Isolamento das etapas internas de `buscarVisaoGeralPeriodo`. As consultas abaixo repetem SOMENTE a forma de acesso
+// (tabela + filtro de datas) de cada etapa do serviço — nenhuma regra de negócio, agregação ou classificação — e devolvem
+// apenas a contagem de linhas. Cada etapa usa um cliente próprio (1 conexão), para uma consulta pendurada não travar as
+// demais nem ser confundida com falta de conexão no pool.
+// ---------------------------------------------------------------------------------------------------------------------
+const TIMEOUT_PASSO_MS = 5_000;
+type Db = ReturnType<typeof drizzle<typeof schema>>;
+
+function novoClienteIsolado() {
+  const client = postgres(process.env.DATABASE_URL!, { prepare: false, max: 1, connect_timeout: 10, idle_timeout: 5 });
+  return { client, db: drizzle(client, { schema }) as Db };
+}
+
+async function etapaIsolada(inicioDaRota: number, nome: string, exec: (db: Db) => Promise<number>) {
+  const { client, db } = novoClienteIsolado();
+  try {
+    return { etapa: nome, ...(await etapa(inicioDaRota, nome, () => exec(db), TIMEOUT_PASSO_MS)) };
+  } finally {
+    void client.end({ timeout: 1 }).catch(() => undefined); // não espera uma consulta pendurada
+  }
+}
+
+function passosDaVisaoGeral(ini: Date, fim: Date): { nome: string; exec: (db: Db) => Promise<number> }[] {
+  const t = schema;
+  const somaPorLoja = (tabela: typeof t.faturamento | typeof t.brindes | typeof t.cancelamentoSalao | typeof t.cancelamentoDelivery | typeof t.compraDireta) => async (db: Db) =>
+    (
+      await db
+        .select({ codigo: t.unidades.codigo, total: sql<string>`coalesce(sum(${tabela.valor}), 0)` })
+        .from(tabela)
+        .innerJoin(t.unidades, eq(tabela.unidadeId, t.unidades.id))
+        .where(between(tabela.data, ini, fim))
+        .groupBy(t.unidades.codigo)
+    ).length;
+  const primeira = (tabela: typeof t.fechamentoCaixa | typeof t.pdvMaquininha | typeof t.troco | typeof t.conferencia | typeof t.quebraCaixa | typeof t.retiradaDeposito, filtro?: ReturnType<typeof eq>) => async (db: Db) => {
+    const consulta = db.select({ min: sql<string | null>`min(${tabela.data})` }).from(tabela);
+    return (await (filtro ? consulta.where(filtro) : consulta)).length;
+  };
+  return [
+    { nome: "01 faturamento", exec: somaPorLoja(t.faturamento) },
+    {
+      nome: "02 formas de pagamento",
+      exec: async (db) =>
+        (await db.select({ codigo: t.unidades.codigo, forma: t.formasPagamento.forma, valor: t.formasPagamento.valor }).from(t.formasPagamento).innerJoin(t.unidades, eq(t.formasPagamento.unidadeId, t.unidades.id)).where(between(t.formasPagamento.data, ini, fim))).length,
+    },
+    {
+      nome: "03 brindes",
+      exec: async (db) =>
+        (await db.select({ codigo: t.unidades.codigo, motivo: t.brindes.motivo, motivo2: t.brindes.motivo2, total: sql<string>`coalesce(sum(${t.brindes.valor}), 0)` }).from(t.brindes).innerJoin(t.unidades, eq(t.brindes.unidadeId, t.unidades.id)).where(between(t.brindes.data, ini, fim)).groupBy(t.unidades.codigo, t.brindes.motivo, t.brindes.motivo2)).length,
+    },
+    { nome: "04 cancelamento salão", exec: somaPorLoja(t.cancelamentoSalao) },
+    { nome: "05 cancelamento delivery", exec: somaPorLoja(t.cancelamentoDelivery) },
+    { nome: "06/07 compra direta (retirada compra direta)", exec: somaPorLoja(t.compraDireta) },
+    {
+      nome: "08a retirada depósito (por loja)",
+      exec: async (db) =>
+        (await db.select({ codigo: t.unidades.codigo, total: sql<string>`coalesce(sum(${t.retiradaDeposito.valor}), 0)` }).from(t.retiradaDeposito).innerJoin(t.unidades, eq(t.retiradaDeposito.unidadeId, t.unidades.id)).where(and(between(t.retiradaDeposito.data, ini, fim), eq(t.retiradaDeposito.motivo, "DEPÓSITO"))).groupBy(t.unidades.codigo)).length,
+    },
+    {
+      nome: "08b retirada depósito (existência da base)",
+      exec: async (db) => (await db.select({ total: sql<string>`count(*)` }).from(t.retiradaDeposito).where(eq(t.retiradaDeposito.motivo, "DEPÓSITO"))).length,
+    },
+    { nome: "09 fechamento de caixa", exec: async (db) => (await db.select({ id: t.fechamentoCaixa.id }).from(t.fechamentoCaixa).where(between(t.fechamentoCaixa.data, ini, fim))).length },
+    {
+      nome: "10 PDV × maquininha",
+      exec: async (db) => (await db.select({ valorPdv: t.pdvMaquininha.valorPdv, valorMaquininha: t.pdvMaquininha.valorMaquininha }).from(t.pdvMaquininha).where(between(t.pdvMaquininha.data, ini, fim))).length,
+    },
+    { nome: "11 troco", exec: async (db) => (await db.select({ diferenca: t.troco.diferenca }).from(t.troco).where(between(t.troco.data, ini, fim))).length },
+    {
+      nome: "12 conferência",
+      exec: async (db) => (await db.select({ qtdCadastrados: t.conferencia.qtdCadastrados, qtdConferidos: t.conferencia.qtdConferidos, emAtraso: t.conferencia.emAtraso }).from(t.conferencia).where(between(t.conferencia.data, ini, fim))).length,
+    },
+    {
+      nome: "13 quebra de caixa",
+      exec: async (db) => (await db.select({ codigo: t.unidades.codigo, valor: t.quebraCaixa.valor }).from(t.quebraCaixa).innerJoin(t.unidades, eq(t.quebraCaixa.unidadeId, t.unidades.id)).where(between(t.quebraCaixa.data, ini, fim))).length,
+    },
+    { nome: "15a cobertura retirada depósito", exec: primeira(t.retiradaDeposito, eq(t.retiradaDeposito.motivo, "DEPÓSITO")) },
+    { nome: "15b cobertura fechamento", exec: primeira(t.fechamentoCaixa) },
+    { nome: "15c cobertura PDV", exec: primeira(t.pdvMaquininha) },
+    { nome: "15d cobertura troco", exec: primeira(t.troco) },
+    { nome: "15e cobertura conferência", exec: primeira(t.conferencia) },
+    { nome: "15f cobertura quebra", exec: primeira(t.quebraCaixa) },
+  ];
+}
+
+/** Fotografia das consultas ativas no banco (texto SQL parametrizado: sem valores de negócio). */
+async function amostraDeAtividade() {
+  const { client, db } = novoClienteIsolado();
+  try {
+    const linhas = await db.execute(sql`
+      select state, wait_event_type, wait_event,
+             round(extract(epoch from (now() - query_start)) * 1000)::int as ms_desde_inicio,
+             left(regexp_replace(query, '\s+', ' ', 'g'), 260) as consulta
+      from pg_stat_activity
+      where datname = current_database() and pid <> pg_backend_pid() and state <> 'idle'
+        and application_name not in ('postgres_exporter', 'pg_cron scheduler', 'pg_net 0.20.4', 'Supavisor (auth_query)')
+      order by query_start limit 25`);
+    return (linhas as unknown as Record<string, unknown>[]).map((l) => ({
+      estado: String(l.state ?? ""),
+      espera: l.wait_event_type ? `${String(l.wait_event_type)}/${String(l.wait_event)}` : null,
+      msDesdeInicio: Number(l.ms_desde_inicio ?? 0),
+      consulta: limpar(String(l.consulta ?? "")),
+    }));
+  } catch (e) {
+    return { erro: erroLegivel(e) };
+  } finally {
+    void client.end({ timeout: 1 }).catch(() => undefined);
+  }
+}
+
+const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export async function GET(request: Request) {
   const tokenEsperado = process.env.DIAG_TOKEN;
   if (!tokenEsperado) return naoEncontrado(); // sem token configurado a rota não existe
@@ -129,9 +250,9 @@ export async function GET(request: Request) {
   const periodoValido = Boolean(inicioParam && fimParam && DATA_VALIDA.test(inicioParam) && DATA_VALIDA.test(fimParam));
   const inicio = periodoValido ? dataDoInput(inicioParam!) : dataDoInput("2026-09-01");
   const fim = periodoValido ? dataDoInput(fimParam!) : dataDoInput("2026-09-30");
-  const quer = (n: string) => !so || so === n;
+  const quer = (n: string) => (so ? so === n : n !== "visao" && n !== "real");
 
-  const saida: Record<string, unknown> = { versao: "diag-1", periodoTestado: `${dia(inicio)} a ${dia(fim)}`, timeoutPorEtapaMs: TIMEOUT_ETAPA_MS };
+  const saida: Record<string, unknown> = { versao: "diag-2", periodoTestado: `${dia(inicio)} a ${dia(fim)}`, timeoutPorEtapaMs: TIMEOUT_ETAPA_MS };
 
   if (quer("ambiente")) {
     let host: string | null = null;
@@ -189,6 +310,52 @@ export async function GET(request: Request) {
       const resumo = (r: PromiseSettledResult<unknown>) => (r.status === "fulfilled" ? { ok: true } : { ok: false, erro: erroLegivel(r.reason) });
       return { periodo: `${dia(p.inicio)} a ${dia(p.fim)}`, visaoGeral: resumo(vg), desempenho: resumo(dc) };
     });
+  }
+
+  if (quer("etapas")) {
+    const passos = passosDaVisaoGeral(inicio, fim);
+    const sequencial = params.get("seq") === "1";
+    const t0 = Date.now();
+    const resultados: Awaited<ReturnType<typeof etapaIsolada>>[] = [];
+    if (sequencial) {
+      for (const p of passos) resultados.push(await etapaIsolada(inicioDaRota, p.nome, p.exec));
+    } else {
+      resultados.push(...(await Promise.all(passos.map((p) => etapaIsolada(inicioDaRota, p.nome, p.exec)))));
+    }
+    // Item 14 (dia anterior): o serviço só consulta fora do modo período (início = fim); aqui não se executa.
+    const ant = mesAnteriorCompleto(inicio, fim);
+    const mesAnt = ant
+      ? await etapa(inicioDaRota, "16 mês anterior (função real, sem recursão)", () => buscarVisaoGeralPeriodo(ant.inicio, ant.fim, false).then((d) => ({ periodo: `${dia(ant.inicio)} a ${dia(ant.fim)}`, lojas: d.detalhamentoPorLoja.length })), TIMEOUT_PASSO_MS)
+      : null;
+    saida.etapas = {
+      modo: sequencial ? "sequencial" : "paralelo (cada etapa com cliente próprio)",
+      timeoutPorEtapaMs: TIMEOUT_PASSO_MS,
+      tabela: [
+        ...resultados.map((r) => ({ etapa: r.etapa, resultado: r.ok ? "OK" : r.timeout ? "TIMEOUT" : "ERRO", ms: r.ms, linhas: r.ok ? r.detalhe : undefined, erro: r.erro })),
+        { etapa: "14 dia anterior", resultado: "NÃO EXECUTADA", ms: 0, erro: { nome: "n/a", mensagem: "o serviço só consulta o dia anterior quando início = fim (modo período não consulta)" } },
+        mesAnt
+          ? { etapa: "16 mês anterior (função real, sem recursão)", resultado: mesAnt.ok ? "OK" : mesAnt.timeout ? "TIMEOUT" : "ERRO", ms: mesAnt.ms, erro: mesAnt.erro }
+          : { etapa: "16 mês anterior", resultado: "NÃO APLICÁVEL", ms: 0, erro: { nome: "n/a", mensagem: "o período não é um mês calendário completo" } },
+      ],
+      totalMs: Date.now() - t0,
+    };
+  }
+  if (quer("real")) {
+    const amostras: unknown[] = [];
+    const pendentes: Promise<void>[] = [];
+    const timers = [4_000, 9_000, 13_000].map((ms) =>
+      setTimeout(() => {
+        pendentes.push(amostraDeAtividade().then((a) => void amostras.push({ aoRedorDeMs: ms, consultasAtivas: a })));
+      }, ms)
+    );
+    const real = await etapa(inicioDaRota, "visaoGeralReal", async () => {
+      const d = await buscarVisaoGeralPeriodo(inicio, fim);
+      return { periodoRetornado: `${dia(d.dataInicio)} a ${dia(d.dataFim)}`, lojas: d.detalhamentoPorLoja.length };
+    });
+    timers.forEach(clearTimeout);
+    await Promise.allSettled(pendentes);
+    await esperar(0);
+    saida.visaoGeralReal = { ...real, amostrasDeAtividadeNoBanco: amostras };
   }
 
   saida.totalMs = Date.now() - inicioDaRota;
