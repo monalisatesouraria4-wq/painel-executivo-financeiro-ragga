@@ -26,9 +26,11 @@ import { buscarDesempenhoCaixa } from "@/lib/services/desempenhoCaixa.server";
  * `?token=`; qualquer outro caso → 404. O token nunca é devolvido nem registrado em log.
  *
  * Uso: /api/diag-visao-geral?inicio=2026-09-01&fim=2026-09-30   (header x-diag-token: <valor>)
- * Opcional: &so=ambiente|ping|contagem|etapas|real|visao|desempenho|ssr   (sem `so`: tudo, exceto `visao` e `real`)
+ * Opcional: &so=ambiente|ping|contagem|etapas|real|pipeline|visao|desempenho|ssr   (sem `so`: tudo, exceto `visao`, `real` e `pipeline`)
  *   etapas → as consultas internas de `buscarVisaoGeralPeriodo` em paralelo, cada uma com cliente próprio e timeout de 5 s
              (acrescente &seq=1 para rodar uma de cada vez)
+ *   pipeline → prova de hipótese: N consultas simples em paralelo com a configuração atual do postgres-js × com
+ *             `max_pipeline: 1` (&n=34 &reps=2). Somente `select count(*)`; não toca no pool compartilhado.
  *   real   → a própria `buscarVisaoGeralPeriodo` + fotografias de `pg_stat_activity` aos 4 s, 9 s e 13 s (mostra qual
              consulta está pendente e em que espera)
  */
@@ -234,6 +236,53 @@ async function amostraDeAtividade() {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Prova de hipótese (pipelining do postgres-js sobre o pooler em modo transação): dispara N consultas simples ao mesmo
+// tempo, com clientes próprios e descartáveis (o pool compartilhado do app não é usado), e mede quantas concluem.
+// ---------------------------------------------------------------------------------------------------------------------
+const TIMEOUT_PROVA_MS = 10_000;
+
+async function provaDePipeline(ini: Date, fim: Date, n: number, opcoes: Record<string, unknown>) {
+  const client = postgres(process.env.DATABASE_URL!, { prepare: false, ...opcoes } as never);
+  const db = drizzle(client, { schema }) as Db;
+  const t0 = Date.now();
+  const tempos: number[] = [];
+  let erros = 0;
+  let ultimoErro: ErroLegivel | undefined;
+  const consultas = Array.from({ length: n }, () =>
+    db
+      .select({ n: sql<string>`count(*)` })
+      .from(faturamento)
+      .where(between(faturamento.data, ini, fim))
+      .then(() => void tempos.push(Date.now() - t0))
+      .catch((e) => {
+        erros++;
+        ultimoErro = erroLegivel(e);
+      })
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const venceu = await Promise.race([
+    Promise.all(consultas).then(() => "concluiu" as const),
+    new Promise<"timeout">((r) => {
+      timer = setTimeout(() => r("timeout"), TIMEOUT_PROVA_MS);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  const ms = Date.now() - t0;
+  const resultado = {
+    consultasEnviadas: n,
+    concluidasOk: tempos.length,
+    comErro: erros,
+    pendentesAoFinal: n - tempos.length - erros,
+    resultado: venceu === "timeout" ? "TIMEOUT (trava)" : erros > 0 ? "ERRO" : "OK",
+    ms,
+    tempoDaConsultaMs: tempos.length ? { min: Math.min(...tempos), max: Math.max(...tempos) } : null,
+    ultimoErro,
+  };
+  void client.end({ timeout: 1 }).catch(() => undefined);
+  return resultado;
+}
+
 const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export async function GET(request: Request) {
@@ -250,9 +299,9 @@ export async function GET(request: Request) {
   const periodoValido = Boolean(inicioParam && fimParam && DATA_VALIDA.test(inicioParam) && DATA_VALIDA.test(fimParam));
   const inicio = periodoValido ? dataDoInput(inicioParam!) : dataDoInput("2026-09-01");
   const fim = periodoValido ? dataDoInput(fimParam!) : dataDoInput("2026-09-30");
-  const quer = (n: string) => (so ? so === n : n !== "visao" && n !== "real");
+  const quer = (n: string) => (so ? so === n : n !== "visao" && n !== "real" && n !== "pipeline");
 
-  const saida: Record<string, unknown> = { versao: "diag-2", periodoTestado: `${dia(inicio)} a ${dia(fim)}`, timeoutPorEtapaMs: TIMEOUT_ETAPA_MS };
+  const saida: Record<string, unknown> = { versao: "diag-3", periodoTestado: `${dia(inicio)} a ${dia(fim)}`, timeoutPorEtapaMs: TIMEOUT_ETAPA_MS };
 
   if (quer("ambiente")) {
     let host: string | null = null;
@@ -339,6 +388,17 @@ export async function GET(request: Request) {
       ],
       totalMs: Date.now() - t0,
     };
+  }
+  if (quer("pipeline")) {
+    const n = Math.min(Math.max(Number(params.get("n") ?? 34) || 34, 1), 100);
+    const reps = Math.min(Math.max(Number(params.get("reps") ?? 2) || 2, 1), 3);
+    const base = { max: 3, idle_timeout: 20, connect_timeout: 10 };
+    const rodadas: { configuracao: string; rodada: number; [k: string]: unknown }[] = [];
+    for (let r = 1; r <= reps; r++) {
+      rodadas.push({ configuracao: "atual (max 3, max_pipeline padrão = 100)", rodada: r, ...(await provaDePipeline(inicio, fim, n, base)) });
+      rodadas.push({ configuracao: "max_pipeline: 1 (max 3)", rodada: r, ...(await provaDePipeline(inicio, fim, n, { ...base, max_pipeline: 1 })) });
+    }
+    saida.pipeline = { consultasPorRodada: n, timeoutPorRodadaMs: TIMEOUT_PROVA_MS, rodadas };
   }
   if (quer("real")) {
     const amostras: unknown[] = [];
