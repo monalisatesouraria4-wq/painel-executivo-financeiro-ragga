@@ -1,6 +1,8 @@
 import { UNIDADES } from "@painel/shared";
 import { classificarSemaforo, FAIXAS_COMPRA_DIRETA, type CorSemaforo } from "@/lib/rules/semaforos";
 
+import type { BaseCobertura } from "@/lib/services/resumoSemanal";
+
 /**
  * Painel de performance da aba "Retirada Compra Direta" (Retiradas). Tipos e
  * agregação PURA — sem nenhum import de banco (usado por componentes client e
@@ -102,6 +104,8 @@ export interface PeriodoCompraDireta {
 
 export interface CompraDiretaPainelData {
   conectado: boolean;
+  /** Menor/maior data de ocorrência da base de Compra Direta (valida a cobertura do período e da comparação). */
+  cobertura: BaseCobertura;
   atual: PeriodoCompraDireta;
   comparacao: PeriodoCompraDireta;
 }

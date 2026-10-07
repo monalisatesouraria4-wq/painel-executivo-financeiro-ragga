@@ -211,6 +211,8 @@ export function SecaoInvestigarMotivo({
   periodoCompTxt,
   comparavel,
   rotulo,
+  textoSemDados = "Sem cancelamentos no período.",
+  situacaoPorValor = false,
 }: {
   motivos: string[];
   selecionado: string | null;
@@ -220,6 +222,10 @@ export function SecaoInvestigarMotivo({
   periodoCompTxt: string;
   comparavel: boolean;
   rotulo: string;
+  /** Texto quando não há registros no período (padrão: Cancelamentos). */
+  textoSemDados?: string;
+  /** true (Compra Direta): a situação vem do VALOR em R$ e a variação em p.p. aparece junto do % s/ faturamento. */
+  situacaoPorValor?: boolean;
 }) {
   const [ordem, setOrdem] = useState<"valor" | "percentual">("valor");
   const lista = [...lojas].sort((a, b) =>
@@ -243,7 +249,7 @@ export function SecaoInvestigarMotivo({
       }
     >
       {motivos.length === 0 ? (
-        <p className="text-sm text-foreground/45">Sem cancelamentos no período.</p>
+        <p className="text-sm text-foreground/45">{textoSemDados}</p>
       ) : (
         <>
           <p className="mb-3 text-xs text-foreground/70">
@@ -276,7 +282,7 @@ export function SecaoInvestigarMotivo({
                     <th className={TH}>Participação no motivo</th>
                     <th className={TH}>Faturamento da loja</th>
                     <th className={TH}>% s/ fatur.</th>
-                    <th className={TH}>Situação (pelo % s/ fat.)</th>
+                    <th className={TH}>{situacaoPorValor ? "Situação (pelo valor em R$)" : "Situação (pelo % s/ fat.)"}</th>
                     <th className={TH}>Comparado e variação (R$, % do valor)</th>
                   </tr>
                 </thead>
@@ -296,9 +302,15 @@ export function SecaoInvestigarMotivo({
                         ) : (
                           `${pct.format(l.percentualFaturamento)}%`
                         )}
+                        {situacaoPorValor && l.percentualFaturamento !== null && l.variacaoPp !== null && (
+                          <span className="block whitespace-nowrap text-[11px] font-normal text-foreground/55">
+                            {Math.abs(l.variacaoPp) < 0.005 ? "" : l.variacaoPp > 0 ? "+" : "-"}
+                            {pct.format(Math.abs(l.variacaoPp))} p.p.
+                          </span>
+                        )}
                       </td>
                       <td className={`${TD} py-2.5`}>
-                        <BadgeSituacao situacao={l.situacao} pp={l.variacaoPp} />
+                        <BadgeSituacao situacao={l.situacao} pp={situacaoPorValor ? null : l.variacaoPp} />
                       </td>
                       <td className={`${TD} py-2.5`}>
                         <CelulaComparado comparado={l.comparado} reais={l.variacaoReais} percentual={l.variacaoPercentual} />
@@ -316,7 +328,7 @@ export function SecaoInvestigarMotivo({
             </div>
           )}
           <p className="mt-2 text-[11px] text-foreground/40">
-            Lojas comparadas dentro do mesmo motivo de {rotulo}; valor absoluto e proporção aparecem separados (a loja de maior valor não é, por isso, a pior). A situação é pelo % sobre o faturamento.
+            Lojas comparadas dentro do mesmo motivo de {rotulo}; valor absoluto e proporção aparecem separados (a loja de maior valor não é, por isso, a pior). {situacaoPorValor ? "A situação é pelo valor em R$ contra o período comparado (menor = melhorou); o % sobre o faturamento e sua variação em p.p. aparecem à parte." : "A situação é pelo % sobre o faturamento."}
             {comparavel ? "" : " Sem base de comparação válida: variações e situações não são exibidas."} Loja com faturamento em menos dias que o período fica sem % e sem comparação (valor em R$ mantido).
           </p>
         </>

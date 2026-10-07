@@ -11,7 +11,7 @@ import {
   percentualCancelamentoValido,
   situacaoPorPercentual,
 } from "@/lib/services/cancelamentoAnalise";
-import { diasDoIntervalo } from "@/lib/services/compraDiretaPainel";
+import { diasDoIntervalo, montarPeriodoCompraDireta } from "@/lib/services/compraDiretaPainel";
 
 const ATUAL = { inicio: "2026-09-28", fim: "2026-10-04" };
 const ANT = { inicio: "2026-09-21", fim: "2026-09-27" };
@@ -240,5 +240,22 @@ describe("comparação de motivos", () => {
     const noAnt = montarPeriodoCancelamento(ANT.inicio, ANT.fim, fatAnt, [...salaoAnt, c("BG 01", "2026-09-25", "MOT 04 - FALTA DE PRODUTO", 40)]);
     const n = compararMotivosCancelados(pSalaoA, noAnt, true).find((x) => x.motivo === "MOT 04 - FALTA DE PRODUTO")!;
     expect([n.atual, n.comparado]).toEqual([0, 40]);
+  });
+});
+
+describe("regressão: a generalização de tipos (PeriodoAnalisavel) não altera o comportamento de Cancelamentos", () => {
+  it("mesmas linhas → mesmos motivos, lojas, comparações e situação (pelo %) nas duas estruturas de período", () => {
+    const cdA = montarPeriodoCompraDireta(ATUAL.inicio, ATUAL.fim, fatAtual, salaoAtual);
+    const cdC = montarPeriodoCompraDireta(ANT.inicio, ANT.fim, fatAnt, salaoAnt);
+    expect(motivosCancelados(cdA)).toEqual(motivosCancelados(pSalaoA));
+    expect(compararMotivosCancelados(cdA, cdC, true)).toEqual(compararMotivosCancelados(pSalaoA, pSalaoC, true));
+    expect(lojasDoMotivo("MOT 03 - ERRO OPERACIONAL", cdA, cdC, true)).toEqual(lojasDoMotivo("MOT 03 - ERRO OPERACIONAL", pSalaoA, pSalaoC, true));
+    expect(percentualCancelamentoValido(cdA)).toBe(percentualCancelamentoValido(pSalaoA));
+  });
+
+  it("a situação de Cancelamentos continua pelo % sobre o faturamento (valor sobe e % cai → melhorou)", () => {
+    expect(situacaoPorPercentual({ valorAtual: 120, valorComparado: 100, percentualAtual: 0.8, percentualComparado: 1 })).toBe("melhorou");
+    // BG 02 (Salão): valor dobra (2.000 × 1.000) mas o % é o mesmo → estável, não "piorou"
+    expect(linhasLojasCancelamento(pSalaoA, pSalaoC, true).find((l) => l.unidade === "BG 02")!.situacao).toBe("estavel");
   });
 });

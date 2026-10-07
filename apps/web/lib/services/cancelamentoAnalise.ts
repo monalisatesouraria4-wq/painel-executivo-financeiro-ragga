@@ -14,6 +14,30 @@ import { coberturaDaBase } from "@/lib/services/resumoSemanal";
  * A base só tem valor por loja × dia × motivo — sem horário, canal, autorizador ou submotivo.
  */
 
+/**
+ * Forma mínima que as funções de motivo/loja precisam de um período — satisfeita por `PeriodoCancelamento` e por
+ * `PeriodoCompraDireta` (mesma estrutura de `montarPeriodoCompraDireta`), o que permite reutilizá-las nas duas abas.
+ */
+export interface LojaAnalisavel {
+  unidade: string;
+  faturamento: number;
+  valor: number;
+  percentual: number;
+  motivos: { motivo: string; valor: number }[];
+  diario: { faturamento: number }[];
+}
+
+export interface PeriodoAnalisavel {
+  inicioOcorrencia: string;
+  fimOcorrencia: string;
+  disponivel: boolean;
+  faturamento: number;
+  valor: number;
+  percentual: number;
+  diario: { faturamento: number }[];
+  porLoja: LojaAnalisavel[];
+}
+
 const arred = (v: number) => Math.round(v * 100) / 100;
 const TOLERANCIA = 0.005;
 const centavos = (v: number) => Math.round(v * 100);
@@ -78,14 +102,14 @@ export function situacaoPorPercentual(e: {
   return a === c ? "estavel" : a < c ? "melhorou" : "piorou";
 }
 
-function variar(atual: number, comparado: number | null): { variacaoReais: number | null; variacaoPercentual: number | null } {
+export function variar(atual: number, comparado: number | null): { variacaoReais: number | null; variacaoPercentual: number | null } {
   if (comparado === null) return { variacaoReais: null, variacaoPercentual: null };
   const delta = arred(atual - comparado);
   return { variacaoReais: delta, variacaoPercentual: Math.abs(comparado) >= TOLERANCIA ? (delta / comparado) * 100 : null };
 }
 
 /** Faturamento do escopo (rede ou loja) quando cobre todos os dias do período; senão `null` (sem % válido). */
-function faturamentoValido(p: PeriodoCancelamento, loja: string): number | null {
+function faturamentoValido(p: PeriodoAnalisavel, loja: string): number | null {
   if (loja !== "TODAS") {
     const l = p.porLoja.find((x) => x.unidade === loja);
     return l && coberturaFaturamentoLoja(l).completo && l.faturamento > 0 ? l.faturamento : null;
@@ -94,7 +118,7 @@ function faturamentoValido(p: PeriodoCancelamento, loja: string): number | null 
 }
 
 /** % de cancelamento do escopo (rede ou loja) sobre o faturamento, só com o faturamento completo no período; senão `null`. */
-export function percentualCancelamentoValido(p: PeriodoCancelamento, loja = "TODAS"): number | null {
+export function percentualCancelamentoValido(p: PeriodoAnalisavel, loja = "TODAS"): number | null {
   const fat = faturamentoValido(p, loja);
   if (fat === null) return null;
   const valor = loja === "TODAS" ? p.valor : (p.porLoja.find((l) => l.unidade === loja)?.valor ?? 0);
@@ -120,7 +144,7 @@ export interface MotivoCancelado {
 }
 
 /** Motivos do escopo — rede ou uma loja — do maior para o menor valor; a soma = total do escopo. */
-export function motivosCancelados(p: PeriodoCancelamento, loja = "TODAS"): MotivoCancelado[] {
+export function motivosCancelados(p: PeriodoAnalisavel, loja = "TODAS"): MotivoCancelado[] {
   const lojas = p.porLoja.filter((l) => loja === "TODAS" || l.unidade === loja);
   const mapa = new Map<string, Map<string, number>>();
   for (const l of lojas) {
@@ -178,7 +202,7 @@ export interface MotivoComparado {
  * Une os motivos dos dois períodos (ordem pelo valor ATUAL; os que só existiam no comparado vêm depois, com atual 0).
  * Com comparação inválida, `comparado` é `null`. Com base válida, ausência no comparado = 0 real.
  */
-export function compararMotivosCancelados(atual: PeriodoCancelamento, comp: PeriodoCancelamento, comparavel: boolean, loja = "TODAS"): MotivoComparado[] {
+export function compararMotivosCancelados(atual: PeriodoAnalisavel, comp: PeriodoAnalisavel, comparavel: boolean, loja = "TODAS"): MotivoComparado[] {
   const ma = motivosCancelados(atual, loja);
   const mc = motivosCancelados(comp, loja);
   const atualPor = new Map(ma.map((m) => [m.motivo, m]));
@@ -217,7 +241,7 @@ export function compararMotivosCancelados(atual: PeriodoCancelamento, comp: Peri
   });
 }
 
-function lojaTemFaturamentoCompleto(a: PeriodoCancelamento, c: PeriodoCancelamento, unidade: string): boolean {
+function lojaTemFaturamentoCompleto(a: PeriodoAnalisavel, c: PeriodoAnalisavel, unidade: string): boolean {
   return coberturaFaturamentoLoja(a.porLoja.find((l) => l.unidade === unidade)).completo && coberturaFaturamentoLoja(c.porLoja.find((l) => l.unidade === unidade)).completo;
 }
 
@@ -321,8 +345,8 @@ export interface LojaDoMotivo {
 }
 
 /** Lojas que tiveram o motivo: valor, participação no motivo, faturamento e % s/ faturamento — compara lojas no mesmo motivo. */
-export function lojasDoMotivo(motivo: string, atual: PeriodoCancelamento, comp: PeriodoCancelamento, baseCobre: boolean, lojaFiltro = "TODAS"): LojaDoMotivo[] {
-  const valorNo = (p: PeriodoCancelamento, u: string) => (p.porLoja.find((l) => l.unidade === u)?.motivos ?? []).filter((m) => m.motivo === motivo).reduce((s, m) => s + m.valor, 0);
+export function lojasDoMotivo(motivo: string, atual: PeriodoAnalisavel, comp: PeriodoAnalisavel, baseCobre: boolean, lojaFiltro = "TODAS"): LojaDoMotivo[] {
+  const valorNo = (p: PeriodoAnalisavel, u: string) => (p.porLoja.find((l) => l.unidade === u)?.motivos ?? []).filter((m) => m.motivo === motivo).reduce((s, m) => s + m.valor, 0);
   const lojas = atual.porLoja.filter((l) => lojaFiltro === "TODAS" || l.unidade === lojaFiltro);
   const linhas = lojas.map((l) => ({ l, valor: valorNo(atual, l.unidade) })).filter((x) => Math.abs(x.valor) >= TOLERANCIA);
   const totalMotivo = linhas.reduce((s, x) => s + x.valor, 0);

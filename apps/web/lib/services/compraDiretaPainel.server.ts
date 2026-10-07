@@ -7,6 +7,7 @@ import {
   type CompraDiretaPainelData,
   type PeriodoCompraDireta,
 } from "./compraDiretaPainel";
+import type { BaseCobertura } from "./resumoSemanal";
 
 /**
  * Consulta real do painel de Compra Direta (Retiradas). Só importado por
@@ -53,6 +54,12 @@ async function buscarPeriodo(db: ReturnType<typeof getDb>, referenciaInicio: Dat
   );
 }
 
+/** Menor/maior data da base de Compra Direta (uma agregação simples, só leitura) — base da validação de cobertura. */
+async function buscarCobertura(db: ReturnType<typeof getDb>): Promise<BaseCobertura> {
+  const [r] = await db.select({ min: sql<string | null>`min(${compraDireta.data})::text`, max: sql<string | null>`max(${compraDireta.data})::text` }).from(compraDireta);
+  return { min: r?.min ?? null, max: r?.max ?? null };
+}
+
 export async function buscarCompraDiretaPainel(
   atualInicio: Date,
   atualFim: Date,
@@ -62,12 +69,13 @@ export async function buscarCompraDiretaPainel(
   const conectado = Boolean(process.env.DATABASE_URL);
   if (!conectado) {
     const vazio = montarPeriodoCompraDireta(iso(dataDMenos1(atualInicio)), iso(dataDMenos1(atualFim)), [], []);
-    return { conectado, atual: vazio, comparacao: vazio };
+    return { conectado, cobertura: { min: null, max: null }, atual: vazio, comparacao: vazio };
   }
   const db = getDb();
-  const [atual, comparacao] = await Promise.all([
+  const [atual, comparacao, cobertura] = await Promise.all([
     buscarPeriodo(db, atualInicio, atualFim),
     buscarPeriodo(db, comparacaoInicio, comparacaoFim),
+    buscarCobertura(db),
   ]);
-  return { conectado, atual, comparacao };
+  return { conectado, cobertura, atual, comparacao };
 }
