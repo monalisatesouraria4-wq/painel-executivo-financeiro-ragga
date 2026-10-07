@@ -16,6 +16,7 @@ export const NAVEGACAO_PRINCIPAL: ItemNavegacao[] = [
   { nome: "Controles de Caixa", href: "/controles-caixa", icone: "🧾" },
   { nome: "Fechamento WhatsApp", href: "/fechamento-whatsapp", icone: "💬" },
   { nome: "Fechamento Semanal", href: "/fechamento-semanal", icone: "🗓️" },
+  { nome: "Resumo Semanal Executivo", href: "/resumo-semanal", icone: "📋" },
 ];
 
 export const NAVEGACAO_ADMIN: ItemNavegacao[] = [
