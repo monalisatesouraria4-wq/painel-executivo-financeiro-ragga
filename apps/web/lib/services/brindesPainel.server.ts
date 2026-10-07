@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { dataDMenos1 } from "@/lib/rules/datas";
 import { unidades, faturamento, brindes } from "@/lib/db/schema";
 import { montarPeriodoBrindes, type BrindesPainelData, type PeriodoBrindes } from "./brindesPainel";
+import type { BaseCobertura } from "./resumoSemanal";
 
 /**
  * Consulta real do painel de Brindes (Indicadores). Só importado por Server Components/Server Actions. Mantém a
@@ -49,13 +50,23 @@ async function buscarPeriodo(db: ReturnType<typeof getDb>, referenciaInicio: Dat
   );
 }
 
+/** Menor/maior data da base de Brindes (uma agregação simples) — base da validação de cobertura. */
+async function buscarCobertura(db: ReturnType<typeof getDb>): Promise<BaseCobertura> {
+  const [r] = await db.select({ min: sql<string | null>`min(${brindes.data})::text`, max: sql<string | null>`max(${brindes.data})::text` }).from(brindes);
+  return { min: r?.min ?? null, max: r?.max ?? null };
+}
+
 export async function buscarBrindesPainel(atualInicio: Date, atualFim: Date, comparacaoInicio: Date, comparacaoFim: Date): Promise<BrindesPainelData> {
   const conectado = Boolean(process.env.DATABASE_URL);
   if (!conectado) {
     const vazio = montarPeriodoBrindes(iso(dataDMenos1(atualInicio)), iso(dataDMenos1(atualFim)), [], []);
-    return { conectado, atual: vazio, comparacao: vazio };
+    return { conectado, cobertura: { min: null, max: null }, atual: vazio, comparacao: vazio };
   }
   const db = getDb();
-  const [atual, comparacao] = await Promise.all([buscarPeriodo(db, atualInicio, atualFim), buscarPeriodo(db, comparacaoInicio, comparacaoFim)]);
-  return { conectado, atual, comparacao };
+  const [atual, comparacao, cobertura] = await Promise.all([
+    buscarPeriodo(db, atualInicio, atualFim),
+    buscarPeriodo(db, comparacaoInicio, comparacaoFim),
+    buscarCobertura(db),
+  ]);
+  return { conectado, cobertura, atual, comparacao };
 }

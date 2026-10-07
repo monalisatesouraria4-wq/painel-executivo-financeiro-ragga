@@ -20,6 +20,18 @@ import {
   type StatusBrinde,
 } from "@/lib/services/brindesPainel";
 import { buscarBrindesPainel } from "@/lib/actions/buscarBrindesPainel";
+import { SecaoModalidade, SecaoMotivos } from "@/components/indicadores/BrindesAnalise";
+import {
+  baseCobreOsPeriodos,
+  comparabilidadeBrindes,
+  compararMotivosDetalhados,
+  linhasLojasBrindes,
+  lojasDaModalidade,
+  motivosDetalhados,
+  ordenarLojasBrindes,
+  type OrdemLojasBrindes,
+} from "@/lib/services/brindesAnalise";
+import { hojeNegocio, janelaAnterior, somarDias, ultimaSemanaCompleta } from "@/lib/services/resumoSemanal";
 
 /**
  * Painel analítico da aba Brindes (Indicadores) — mesma experiência da Compra Direta. TOTAL de Brindes =
@@ -223,8 +235,7 @@ const ESTILO_CHIP: Record<StatusBrinde, { emoji: string; faixa: string; classe: 
   atencao: { emoji: "🟡", faixa: `acima de ${pct.format(LIMITE_SAUDAVEL_BRINDES)}% até ${pct.format(LIMITE_ATENCAO_BRINDES)}%`, classe: "border-semaforo-amarelo/30 bg-semaforo-amarelo/10" },
   critico: { emoji: "🔴", faixa: `acima de ${pct.format(LIMITE_ATENCAO_BRINDES)}%`, classe: "border-semaforo-vermelho/30 bg-semaforo-vermelho/10" },
 };
-const PESO_STATUS: Record<StatusBrinde, number> = { critico: 2, atencao: 1, excelente: 0 };
-type OrdemRanking = "valor" | "percentual" | "loja" | "criticidade";
+type OrdemRanking = OrdemLojasBrindes;
 
 function distanciaTexto(percentualControlaveis: number): string {
   const d = percentualControlaveis - LIMITE_SAUDAVEL_BRINDES;
@@ -398,6 +409,7 @@ export function BrindesPainel({
   const [statusFiltro, setStatusFiltro] = useState<StatusBrinde | null>(null);
   const [ordem, setOrdem] = useState<OrdemRanking>("percentual");
   const [lojasAbertas, setLojasAbertas] = useState<Set<string>>(new Set());
+  const [modalidadeSel, setModalidadeSel] = useState<string | null>(null);
   const [pendente, iniciarTransicao] = useTransition();
   const ultimaRequisicao = useRef(0);
 
@@ -448,6 +460,22 @@ export function BrindesPainel({
     carregar(inicio, fim, ci, cf);
   }
 
+  /** Atalho: última semana COMPLETA (seg–dom, ocorrência) × semana completa imediatamente anterior. A aba usa D-1, então a referência é ocorrência + 1 dia. */
+  function usarUltimaSemanaCompleta() {
+    const sem = ultimaSemanaCompleta(hojeNegocio());
+    const ant = janelaAnterior(sem);
+    const i = somarDias(sem.inicio, 1);
+    const f = somarDias(sem.fim, 1);
+    const ci = somarDias(ant.inicio, 1);
+    const cf = somarDias(ant.fim, 1);
+    setCompManual(true);
+    setInicio(i);
+    setFim(f);
+    setCompInicio(ci);
+    setCompFim(cf);
+    carregar(i, f, ci, cf);
+  }
+
   function alternarLoja(unidade: string) {
     setLojasAbertas((a) => {
       const n = new Set(a);
@@ -459,31 +487,39 @@ export function BrindesPainel({
 
   const atual = escopoDe(dados.atual, loja);
   const comp = escopoDe(dados.comparacao, loja);
-  const podeComparar = atual.disponivel && comp.disponivel;
+  // Comparação só vale com cobertura: base cobre os dois períodos e o faturamento (rede ou loja) está completo nos dois.
+  const comparab = comparabilidadeBrindes(dados, loja);
+  const podeComparar = atual.disponivel && comp.disponivel && comparab.valida;
   const mesCompleto = completa(inicio) && completa(fim) && ehMesCalendarioCompleto(dataDoInput(inicio), dataDoInput(fim));
   const sugestaoMes = mesCompleto ? mesAnteriorCompleto(dataDoInput(inicio), dataDoInput(fim)) : null;
   const compEhSugestao = sugestaoMes && paraInputDate(sugestaoMes.inicio) === compInicio && paraInputDate(sugestaoMes.fim) === compFim;
 
-  const lojasEscopo = dados.atual.porLoja.filter((l) => loja === "TODAS" || l.unidade === loja);
-  const contagem = lojasEscopo.reduce((c, l) => ({ ...c, [l.status]: c[l.status] + 1 }), { excelente: 0, atencao: 0, critico: 0 } as Record<StatusBrinde, number>);
+  const linhasLojas = linhasLojasBrindes(dados.atual, dados.comparacao, baseCobreOsPeriodos(dados), loja);
+  // Lojas com faturamento em menos dias que o período não entram na contagem de status (% não representa o período).
+  const contagem = linhasLojas
+    .filter((l) => !l.coberturaParcial)
+    .reduce((c, l) => ({ ...c, [l.status]: c[l.status] + 1 }), { excelente: 0, atencao: 0, critico: 0 } as Record<StatusBrinde, number>);
+  const ranking = ordenarLojasBrindes(linhasLojas, ordem);
+  const rankingVisivel = statusFiltro ? ranking.filter((l) => !l.coberturaParcial && l.status === statusFiltro) : ranking;
 
-  const ranking = [...lojasEscopo].sort((a, b) => {
-    switch (ordem) {
-      case "valor":
-        return b.total - a.total || a.unidade.localeCompare(b.unidade);
-      case "loja":
-        return a.unidade.localeCompare(b.unidade);
-      case "criticidade":
-        return PESO_STATUS[b.status] - PESO_STATUS[a.status] || b.percentualControlaveis - a.percentualControlaveis || a.unidade.localeCompare(b.unidade);
-      default:
-        return b.percentualControlaveis - a.percentualControlaveis || a.unidade.localeCompare(b.unidade);
-    }
-  });
-  const rankingVisivel = statusFiltro ? ranking.filter((l) => l.status === statusFiltro) : ranking;
+  // Motivos → submotivos e modalidade → lojas (mesma matriz; reconcilia com os totais do escopo).
+  const motivosAtual = motivosDetalhados(dados.atual.matriz, loja);
+  const motivosComp = motivosDetalhados(dados.comparacao.matriz, loja);
+  const linhasMotivos = compararMotivosDetalhados(motivosAtual, motivosComp, podeComparar);
+  const modalidades = motivosAtual.map((m) => m.motivo);
+  const modalidadeAtiva = modalidadeSel && modalidades.includes(modalidadeSel) ? modalidadeSel : (modalidades[0] ?? null);
+  const lojasModalidade = modalidadeAtiva ? lojasDaModalidade(modalidadeAtiva, dados.atual, dados.comparacao, baseCobreOsPeriodos(dados), loja) : [];
+  function investigarModalidade(m: string) {
+    setModalidadeSel(m);
+    requestAnimationFrame(() => document.getElementById("brindes-modalidade")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
 
   const inputCls = "rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40";
   const periodoAtualTxt = `${diaMesAno(inicio)} a ${diaMesAno(fim)}`;
   const periodoCompTxt = `${diaMesAno(compInicio)} a ${diaMesAno(compFim)}`;
+  // Datas de OCORRÊNCIA (D-1) — as que de fato foram somadas; usadas nas seções novas para não confundir com a referência.
+  const ocorrAtualTxt = `${diaMesAno(dados.atual.inicioOcorrencia)} a ${diaMesAno(dados.atual.fimOcorrencia)}`;
+  const ocorrCompTxt = `${diaMesAno(dados.comparacao.inicioOcorrencia)} a ${diaMesAno(dados.comparacao.fimOcorrencia)}`;
   const slot = (v: number, ok: boolean, fmt: (n: number) => string) => (ok ? fmt(v) : "Sem dados");
   // Refeições de colaboradores: dado já existente (motivo "Consumo Funcionários" do escopo/período selecionado) ÷ R$ 10.
   const consumoFuncionarios = atual.motivos.find((m) => m.motivo === MOTIVO_CONSUMO_FUNCIONARIOS)?.valor ?? 0;
@@ -505,7 +541,7 @@ export function BrindesPainel({
       <div className="flex flex-wrap items-end gap-x-6 gap-y-3 rounded-xl border border-ragga-blue/10 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(31,53,112,0.06)]">
         <div>
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-foreground/45">Período atual</p>
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <input type="date" value={inicio} onChange={(e) => alterarAtual(e.target.value, fim)} className={inputCls} />
             <span className="text-foreground/40">até</span>
             <input type="date" value={fim} onChange={(e) => alterarAtual(inicio, e.target.value)} className={inputCls} />
@@ -521,7 +557,7 @@ export function BrindesPainel({
             )}
             {compEhSugestao && <span className="normal-case tracking-normal text-foreground/40">(mês anterior sugerido)</span>}
           </p>
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <input type="date" value={compInicio} onChange={(e) => alterarComparacao(e.target.value, compFim)} className={inputCls} />
             <span className="text-foreground/40">até</span>
             <input type="date" value={compFim} onChange={(e) => alterarComparacao(compInicio, e.target.value)} className={inputCls} />
@@ -538,12 +574,26 @@ export function BrindesPainel({
             ))}
           </select>
         </div>
+        <button
+          type="button"
+          onClick={usarUltimaSemanaCompleta}
+          className="rounded-md border border-ragga-blue/20 px-3 py-2 text-sm font-medium text-ragga-blue hover:bg-ragga-blue/5"
+          title="Última semana completa (segunda a domingo) comparada com a semana completa imediatamente anterior"
+        >
+          Última semana completa
+        </button>
         {pendente && <span className="pb-2 text-xs text-foreground/50">Carregando...</span>}
       </div>
       <p className="-mt-3 px-1 text-[11px] text-foreground/45">
         Regra D-1 da aba: ocorrências de {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
         {diaMesAno(dados.comparacao.inicioOcorrencia)} a {diaMesAno(dados.comparacao.fimOcorrencia)}).
       </p>
+
+      {dados.conectado && atual.disponivel && comp.disponivel && !comparab.valida && (
+        <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
+          ⚠ Comparação com o período comparado não é válida: {comparab.motivo} Variações e comparativos ficam como “Sem base”.
+        </div>
+      )}
 
       {!dados.conectado && (
         <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
@@ -699,6 +749,158 @@ export function BrindesPainel({
         <p className="mt-1 text-xs text-foreground/50">Brindes Não Controláveis fazem parte do Total de Brindes, mas não penalizam a loja.</p>
       </div>
 
+      {/* 2) O QUE GEROU OS BRINDES? — modalidades → submotivos (reconcilia com o total dos cards) */}
+      <SecaoMotivos
+        linhas={linhasMotivos}
+        totalAtual={atual.total}
+        totalComparado={podeComparar ? comp.total : null}
+        comparavel={podeComparar}
+        motivoSemComparacao={atual.disponivel && comp.disponivel ? comparab.motivo : "Sem registros de Brindes em um dos períodos."}
+        periodoAtualTxt={ocorrAtualTxt}
+        periodoCompTxt={ocorrCompTxt}
+        escopoTxt={loja === "TODAS" ? "rede" : loja}
+        motivoSelecionado={modalidadeAtiva}
+        aoInvestigar={investigarModalidade}
+      />
+
+      {/* 5) RANKING DE LOJAS */}
+      {/* COMPARATIVO DE BRINDES POR LOJA — valor absoluto e proporção (% s/ faturamento) lado a lado, sem julgar só pelo valor. */}
+      <Secao
+        titulo="Comparativo de brindes por loja"
+        acao={
+          <label className="flex items-center gap-2 text-xs font-medium text-ragga-blue-dark">
+            Ordenar por
+            <select value={ordem} onChange={(e) => setOrdem(e.target.value as OrdemRanking)} className="rounded-md border border-ragga-blue/15 bg-white px-2 py-1.5 text-xs">
+              <option value="valor">Valor de brindes (R$)</option>
+              <option value="percentual">% controláveis sobre o faturamento</option>
+              <option value="variacao">Variação vs. período comparado (R$)</option>
+              <option value="loja">Loja</option>
+              <option value="criticidade">Status (semáforo)</option>
+            </select>
+          </label>
+        }
+      >
+        <p className="mb-3 text-[11px] text-foreground/45">
+          Valor absoluto e proporção são mostrados separadamente: a loja de maior valor não é, por isso, a pior. Status = brindes CONTROLÁVEIS ÷ faturamento (regra existente); o total e os não controláveis não penalizam a loja.
+        </p>
+        <div className="mb-4 flex flex-wrap gap-2">
+          {(["excelente", "atencao", "critico"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatusFiltro((a) => (a === s ? null : s))}
+              aria-pressed={statusFiltro === s}
+              className={`rounded-lg border px-3 py-2 text-left text-sm transition-shadow ${ESTILO_CHIP[s].classe} ${statusFiltro === s ? "ring-2 ring-ragga-blue/50" : "hover:shadow-sm"}`}
+            >
+              <span className="font-bold text-ragga-blue-dark">
+                {ESTILO_CHIP[s].emoji} {contagem[s]} {contagem[s] === 1 ? "loja" : "lojas"}
+              </span>
+              <span className="block text-xs text-foreground/60">
+                {ROTULO_STATUS_BRINDE[s]} — {ESTILO_CHIP[s].faixa}
+              </span>
+            </button>
+          ))}
+          {statusFiltro && (
+            <button type="button" onClick={() => setStatusFiltro(null)} className="self-center text-xs font-semibold text-ragga-blue hover:underline">
+              limpar filtro
+            </button>
+          )}
+        </div>
+
+        <div className="-mx-5 overflow-x-auto sm:-mx-6">
+          <table className="w-full min-w-[860px] text-sm">
+            <thead>
+              <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                <th className="px-5 py-2.5 sm:px-6">Loja</th>
+                <th className="px-4 py-2.5">Total de brindes</th>
+                <th className="px-4 py-2.5">Controláveis</th>
+                <th className="px-4 py-2.5">Faturamento da loja</th>
+                <th className="px-4 py-2.5">% control. s/ fat.</th>
+                <th className="px-4 py-2.5">Variação do total (R$ / %)</th>
+                <th className="px-4 py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rankingVisivel.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-5 py-6 text-center text-sm text-foreground/45 sm:px-6">
+                    Nenhuma loja neste filtro.
+                  </td>
+                </tr>
+              ) : (
+                rankingVisivel.map((l) => {
+                  const aberta = lojasAbertas.has(l.unidade);
+                  return (
+                    <Fragment key={l.unidade}>
+                      <tr onClick={() => alternarLoja(l.unidade)} className="cursor-pointer border-b border-ragga-blue/5 hover:bg-ragga-blue/[0.04]">
+                        <td className="px-5 py-3 font-semibold text-ragga-blue-dark sm:px-6">
+                          <span className="mr-1.5 inline-block w-3 text-ragga-blue/45">{aberta ? "▾" : "▸"}</span>
+                          {l.unidade}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums font-semibold text-foreground/80">{moeda.format(l.total)}</td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/80">{moeda.format(l.controlaveis)}</td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/70">{moeda.format(l.faturamento)}</td>
+                        <td className="px-4 py-3 tabular-nums font-semibold text-ragga-blue-dark">
+                          {l.percentualControlaveis === null ? (
+                            <span className="text-xs font-semibold text-semaforo-amarelo">
+                              ⚠ faturamento em {l.diasComFaturamento} de {l.diasDoPeriodo} dias
+                            </span>
+                          ) : (
+                            `${pct.format(l.percentualControlaveis)}%`
+                          )}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums">
+                          {l.variacaoReais === null ? (
+                            <span className="text-foreground/40">Sem base</span>
+                          ) : (
+                            <span className="whitespace-nowrap font-semibold text-foreground/75">
+                              {l.variacaoReais > 0 ? "↑" : l.variacaoReais < 0 ? "↓" : "="} {moeda.format(Math.abs(l.variacaoReais))}
+                              {l.variacaoPercentual !== null && ` (${l.variacaoPercentual >= 0 ? "+" : "-"}${pct.format(Math.abs(l.variacaoPercentual))}%)`}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {l.coberturaParcial ? (
+                            <span className="text-xs font-semibold text-semaforo-amarelo">⚠ Cobertura parcial</span>
+                          ) : (
+                            <SemaforoBadge cor={l.loja.cor} texto={`${ESTILO_CHIP[l.status].emoji} ${ROTULO_STATUS_BRINDE[l.status]}`} />
+                          )}
+                        </td>
+                      </tr>
+                      {aberta && (
+                        <tr>
+                          <td colSpan={7} className="bg-ragga-bg/60 px-5 py-4 sm:px-6">
+                            <DetalheLoja loja={l.loja} compLoja={l.compLoja ?? undefined} periodoAtual={periodoAtualTxt} periodoComp={periodoCompTxt} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-[11px] text-foreground/40">
+          Variação do total de brindes em relação ao período comparado ({ocorrCompTxt}, datas de ocorrência); só aparece com base e faturamento completos da loja nos dois períodos. Loja com faturamento em menos dias que o período fica sem % e sem status (valores em R$ mantidos).
+        </p>
+      </Secao>
+
+      {/* 4) INVESTIGAR POR MODALIDADE — compara lojas dentro da mesma modalidade */}
+      <div id="brindes-modalidade" className="scroll-mt-4">
+        <SecaoModalidade
+          modalidades={modalidades}
+          selecionada={modalidadeAtiva}
+          aoSelecionar={setModalidadeSel}
+          lojas={lojasModalidade}
+          controlavel={motivosAtual.find((m) => m.motivo === modalidadeAtiva)?.controlavel ?? false}
+          periodoAtualTxt={ocorrAtualTxt}
+          periodoCompTxt={ocorrCompTxt}
+          comparavel={baseCobreOsPeriodos(dados)}
+        />
+      </div>
+
+      {/* DETALHAMENTO — comparativo completo dos períodos e evolução diária */}
       {/* 2) COMPARATIVO DO PERÍODO */}
       <Secao titulo="Comparativo de períodos">
         <div className="mb-3 grid gap-1 text-xs text-foreground/60 sm:grid-cols-2">
@@ -760,122 +962,10 @@ export function BrindesPainel({
         </p>
       </Secao>
 
-      {/* 3) COMPARAÇÃO POR MOTIVO */}
-      <Secao titulo="Comparação por motivo">
-        <div className="mb-3 grid gap-1 text-xs text-foreground/60 sm:grid-cols-2">
-          <p>
-            <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt}
-          </p>
-          <p>
-            <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt}
-          </p>
-        </div>
-        <TabelaComparativoMotivos atual={atual.motivos} comparado={comp.motivos} temBase={comp.disponivel} pctControlaveisAtual={atual.percentualControlaveis} pctControlaveisComparado={comp.percentualControlaveis} />
-        <p className="mt-2 text-[11px] text-foreground/40">
-          Percentual sobre o valor do período comparado; participação = motivo ÷ total de brindes do período. Motivos não controláveis mostram valores e variações, sem avaliação de performance.
-        </p>
-      </Secao>
-
-      {/* 4) EVOLUÇÃO POR DIA */}
       <Secao titulo="📈 Evolução por dia" acao={<ToggleModo modo={modoGrafico} aoAlterar={setModoGrafico} />}>
         <Evolucao dias={atual.diario} modo={modoGrafico} />
       </Secao>
 
-      {/* 5) RANKING DE LOJAS */}
-      <Secao
-        titulo="Ranking de performance por loja"
-        acao={
-          <label className="flex items-center gap-2 text-xs font-medium text-ragga-blue-dark">
-            Ordenar por
-            <select value={ordem} onChange={(e) => setOrdem(e.target.value as OrdemRanking)} className="rounded-md border border-ragga-blue/15 bg-white px-2 py-1.5 text-xs">
-              <option value="valor">Valor (total de brindes)</option>
-              <option value="percentual">Porcentagem (controláveis)</option>
-              <option value="loja">Loja</option>
-              <option value="criticidade">Performance / Criticidade</option>
-            </select>
-          </label>
-        }
-      >
-        <p className="mb-3 text-[11px] text-foreground/45">Status = brindes CONTROLÁVEIS ÷ faturamento. O % do total de brindes é apenas informativo: o total e os não controláveis aparecem, mas não penalizam a loja.</p>
-        <div className="mb-4 flex flex-wrap gap-2">
-          {(["excelente", "atencao", "critico"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setStatusFiltro((a) => (a === s ? null : s))}
-              aria-pressed={statusFiltro === s}
-              className={`rounded-lg border px-3 py-2 text-left text-sm transition-shadow ${ESTILO_CHIP[s].classe} ${statusFiltro === s ? "ring-2 ring-ragga-blue/50" : "hover:shadow-sm"}`}
-            >
-              <span className="font-bold text-ragga-blue-dark">
-                {ESTILO_CHIP[s].emoji} {contagem[s]} {contagem[s] === 1 ? "loja" : "lojas"}
-              </span>
-              <span className="block text-xs text-foreground/60">
-                {ROTULO_STATUS_BRINDE[s]} — {ESTILO_CHIP[s].faixa}
-              </span>
-            </button>
-          ))}
-          {statusFiltro && (
-            <button type="button" onClick={() => setStatusFiltro(null)} className="self-center text-xs font-semibold text-ragga-blue hover:underline">
-              limpar filtro
-            </button>
-          )}
-        </div>
-
-        <div className="-mx-5 overflow-x-auto sm:-mx-6">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
-                <th className="px-5 py-2.5 sm:px-6">Loja</th>
-                <th className="px-4 py-2.5">Total brindes</th>
-                <th className="px-4 py-2.5">Controláveis</th>
-                <th className="px-4 py-2.5">Não controláveis</th>
-                <th className="px-4 py-2.5">% total / fat.</th>
-                <th className="px-4 py-2.5">% control. / fat.</th>
-                <th className="px-4 py-2.5">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rankingVisivel.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-5 py-6 text-center text-sm text-foreground/45 sm:px-6">
-                    Nenhuma loja neste filtro.
-                  </td>
-                </tr>
-              ) : (
-                rankingVisivel.map((l) => {
-                  const aberta = lojasAbertas.has(l.unidade);
-                  const compLoja = dados.comparacao.porLoja.find((x) => x.unidade === l.unidade);
-                  return (
-                    <Fragment key={l.unidade}>
-                      <tr onClick={() => alternarLoja(l.unidade)} className="cursor-pointer border-b border-ragga-blue/5 hover:bg-ragga-blue/[0.04]">
-                        <td className="px-5 py-3 font-semibold text-ragga-blue-dark sm:px-6">
-                          <span className="mr-1.5 inline-block w-3 text-ragga-blue/45">{aberta ? "▾" : "▸"}</span>
-                          {l.unidade}
-                        </td>
-                        <td className="px-4 py-3 tabular-nums text-foreground/80">{moeda.format(l.total)}</td>
-                        <td className="px-4 py-3 tabular-nums text-foreground/80">{moeda.format(l.controlaveis)}</td>
-                        <td className="px-4 py-3 tabular-nums text-foreground/80">{moeda.format(l.naoControlaveis)}</td>
-                        <td className="px-4 py-3 tabular-nums text-foreground/70">{pct.format(l.percentualTotal)}%</td>
-                        <td className="px-4 py-3 tabular-nums font-semibold text-ragga-blue-dark">{pct.format(l.percentualControlaveis)}%</td>
-                        <td className="px-4 py-3">
-                          <SemaforoBadge cor={l.cor} texto={`${ESTILO_CHIP[l.status].emoji} ${ROTULO_STATUS_BRINDE[l.status]}`} />
-                        </td>
-                      </tr>
-                      {aberta && (
-                        <tr>
-                          <td colSpan={7} className="bg-ragga-bg/60 px-5 py-4 sm:px-6">
-                            <DetalheLoja loja={l} compLoja={compLoja} periodoAtual={periodoAtualTxt} periodoComp={periodoCompTxt} />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Secao>
     </div>
   );
 }
@@ -902,6 +992,7 @@ function DetalheLoja({ loja, compLoja, periodoAtual, periodoComp }: { loja: Loja
           <Item rotulo="Controláveis" valor={moeda.format(loja.controlaveis)} />
           <Item rotulo="Não controláveis" valor={moeda.format(loja.naoControlaveis)} />
           <Item rotulo="% control. / fat." valor={`${pct.format(loja.percentualControlaveis)}%`} />
+          <Item rotulo="% total / fat. (informativo)" valor={`${pct.format(loja.percentualTotal)}%`} />
           <Item rotulo="Limite saudável" valor={`${pct.format(LIMITE_SAUDAVEL_BRINDES)}%`} />
           <Item rotulo="Distância do limite" valor={distanciaTexto(loja.percentualControlaveis)} />
           <Item rotulo="Status" valor={<SemaforoBadge cor={loja.cor} texto={`${ESTILO_CHIP[loja.status].emoji} ${ROTULO_STATUS_BRINDE[loja.status]}`} />} />

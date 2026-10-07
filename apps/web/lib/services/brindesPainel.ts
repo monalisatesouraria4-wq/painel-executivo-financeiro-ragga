@@ -2,6 +2,7 @@ import { UNIDADES } from "@painel/shared";
 import { classificarBrinde } from "@/lib/rules/brindes";
 import { classificarSemaforo, FAIXAS_BRINDES, type CorSemaforo } from "@/lib/rules/semaforos";
 import { diasDoIntervalo } from "@/lib/services/compraDiretaPainel";
+import type { BaseCobertura } from "@/lib/services/resumoSemanal";
 
 /**
  * Painel de performance da aba Brindes (Indicadores). Tipos e agregação PURA — sem import de banco (usado por
@@ -74,6 +75,24 @@ export interface LojaBrindes extends Totais {
   diario: DiaBrindes[];
 }
 
+/**
+ * Valor agregado por loja × modalidade (rótulo da classificação existente) × submotivo (`brindes.motivo2`, como está na
+ * base: só normalizado em maiúsculas/espaços). Alimenta as visões "O que gerou os brindes?" e "por modalidade" sem
+ * nova consulta; a soma de todas as linhas = total do período. A base NÃO tem quantidade de ocorrências.
+ */
+export interface LinhaMatrizBrinde {
+  unidade: string;
+  motivo: string;
+  controlavel: boolean;
+  /** Submotivo normalizado; "" = motivo2 vazio na base. */
+  submotivo: string;
+  valor: number;
+}
+
+export function normalizarSubmotivo(motivo2: string): string {
+  return motivo2.replace(/\s+/g, " ").trim().toUpperCase();
+}
+
 export interface PeriodoBrindes extends Totais {
   inicioOcorrencia: string;
   fimOcorrencia: string;
@@ -84,10 +103,13 @@ export interface PeriodoBrindes extends Totais {
   porLoja: LojaBrindes[];
   motivos: MotivoBrinde[];
   diario: DiaBrindes[];
+  matriz: LinhaMatrizBrinde[];
 }
 
 export interface BrindesPainelData {
   conectado: boolean;
+  /** Menor/maior data de ocorrência da base de Brindes inteira (para validar a cobertura do período e da comparação). */
+  cobertura: BaseCobertura;
   atual: PeriodoBrindes;
   comparacao: PeriodoBrindes;
 }
@@ -157,10 +179,16 @@ export function montarPeriodoBrindes(
     fatLojaDia.set(l.codigo, m);
   }
 
+  const matrizMapa = new Map<string, LinhaMatrizBrinde>();
   // loja → dia → motivo(rótulo) → {controlavel, valor}
   const brLojaDia = new Map<string, Map<string, Map<string, { controlavel: boolean; valor: number }>>>();
   for (const l of brindesLinhas) {
     const c = classificarBrinde(l.motivo, l.motivo2);
+    const sub = normalizarSubmotivo(l.motivo2);
+    const chaveMatriz = `${l.codigo}|${c.rotulo}|${sub}`;
+    const mm = matrizMapa.get(chaveMatriz);
+    if (mm) mm.valor += l.valor;
+    else matrizMapa.set(chaveMatriz, { unidade: l.codigo, motivo: c.rotulo, controlavel: c.controlavel, submotivo: sub, valor: l.valor });
     const porDia = brLojaDia.get(l.codigo) ?? new Map<string, Map<string, { controlavel: boolean; valor: number }>>();
     const porMotivo = porDia.get(l.data) ?? new Map<string, { controlavel: boolean; valor: number }>();
     const atual = porMotivo.get(c.rotulo);
@@ -232,5 +260,6 @@ export function montarPeriodoBrindes(
     porLoja,
     motivos: agruparMotivosBrinde(diario.flatMap((d) => d.motivos)),
     diario,
+    matriz: [...matrizMapa.values()].map((m) => ({ ...m, valor: arred(m.valor) })),
   };
 }
