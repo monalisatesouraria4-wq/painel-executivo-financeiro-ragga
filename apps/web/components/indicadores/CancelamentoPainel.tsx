@@ -9,6 +9,20 @@ import { PlanoAcaoCelula } from "./PlanoAcaoCelula";
 import { paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import { ehMesCalendarioCompleto, mesAnteriorCompleto } from "@/lib/rules/mesAnterior";
 import { compararMotivos } from "@/lib/services/compraDiretaPainel";
+import { BadgeSituacao, CelulaComparado, SecaoInvestigarMotivo, SecaoMotivosCancelamento } from "@/components/indicadores/CancelamentoAnalise";
+import { Var } from "@/components/indicadores/BrindesAnalise";
+import {
+  baseCobreOsPeriodos,
+  comparabilidadeCancelamento,
+  compararMotivosCancelados,
+  linhasLojasCancelamento,
+  lojasDoMotivo,
+  motivosCancelados,
+  ordenarLojasCancelamento,
+  percentualCancelamentoValido,
+  situacaoPorPercentual,
+  type OrdemLojasCancelamento,
+} from "@/lib/services/cancelamentoAnalise";
 import {
   LIMITE_ATENCAO_CANCELAMENTO,
   LIMITE_BOM_CANCELAMENTO,
@@ -58,8 +72,7 @@ const ESTILO_CHIP: Record<StatusCancelamento, { emoji: string; faixa: string; cl
   atencao: { emoji: "🟡", faixa: `acima de ${pct.format(LIMITE_BOM_CANCELAMENTO)}% até ${pct.format(LIMITE_ATENCAO_CANCELAMENTO)}%`, classe: "border-semaforo-amarelo/30 bg-semaforo-amarelo/10" },
   critico: { emoji: "🔴", faixa: `acima de ${pct.format(LIMITE_ATENCAO_CANCELAMENTO)}%`, classe: "border-semaforo-vermelho/30 bg-semaforo-vermelho/10" },
 };
-const PESO_STATUS: Record<StatusCancelamento, number> = { critico: 3, atencao: 2, bom: 1, excelente: 0 };
-type OrdemRanking = "valor" | "percentual" | "loja" | "criticidade";
+type OrdemRanking = OrdemLojasCancelamento;
 
 function Evolucao({ dias, modo, rotulo, altura }: { dias: DiaCancelamento[]; modo: "valor" | "percentual"; rotulo: string; altura?: number }) {
   return (
@@ -233,6 +246,7 @@ export function CancelamentoPainel({
   const [statusFiltro, setStatusFiltro] = useState<StatusCancelamento | null>(null);
   const [ordem, setOrdem] = useState<OrdemRanking>("percentual");
   const [lojasAbertas, setLojasAbertas] = useState<Set<string>>(new Set());
+  const [motivoSel, setMotivoSel] = useState<string | null>(null);
   const [pendente, iniciarTransicao] = useTransition();
   const ultimaRequisicao = useRef(0);
 
@@ -294,31 +308,47 @@ export function CancelamentoPainel({
 
   const atual = escopoDe(dados.atual, loja);
   const comp = escopoDe(dados.comparacao, loja);
-  const podeComparar = atual.disponivel && comp.disponivel;
+  // Comparação só vale com cobertura: base cobre os dois períodos e o faturamento (rede ou loja) está completo nos dois.
+  const comparab = comparabilidadeCancelamento(dados, loja);
+  const podeComparar = atual.disponivel && comp.disponivel && comparab.valida;
   const mesCompleto = completa(inicio) && completa(fim) && ehMesCalendarioCompleto(dataDoInput(inicio), dataDoInput(fim));
   const sugestaoMes = mesCompleto ? mesAnteriorCompleto(dataDoInput(inicio), dataDoInput(fim)) : null;
   const compEhSugestao = sugestaoMes && paraInputDate(sugestaoMes.inicio) === compInicio && paraInputDate(sugestaoMes.fim) === compFim;
 
-  const lojasEscopo = dados.atual.porLoja.filter((l) => loja === "TODAS" || l.unidade === loja);
-  const contagem = lojasEscopo.reduce((c, l) => ({ ...c, [l.status]: c[l.status] + 1 }), { excelente: 0, bom: 0, atencao: 0, critico: 0 } as Record<StatusCancelamento, number>);
+  const baseCobre = baseCobreOsPeriodos(dados);
+  const linhasLojas = linhasLojasCancelamento(dados.atual, dados.comparacao, baseCobre, loja);
+  // Lojas com faturamento em menos dias que o período não entram na contagem de status (o % não representa o período).
+  const contagem = linhasLojas
+    .filter((l) => !l.coberturaParcial)
+    .reduce((c, l) => ({ ...c, [l.status]: c[l.status] + 1 }), { excelente: 0, bom: 0, atencao: 0, critico: 0 } as Record<StatusCancelamento, number>);
+  const ranking = ordenarLojasCancelamento(linhasLojas, ordem);
+  const rankingVisivel = statusFiltro ? ranking.filter((l) => !l.coberturaParcial && l.status === statusFiltro) : ranking;
 
-  const ranking = [...lojasEscopo].sort((a, b) => {
-    switch (ordem) {
-      case "valor":
-        return b.valor - a.valor || a.unidade.localeCompare(b.unidade);
-      case "loja":
-        return a.unidade.localeCompare(b.unidade);
-      case "criticidade":
-        return PESO_STATUS[b.status] - PESO_STATUS[a.status] || b.percentual - a.percentual || a.unidade.localeCompare(b.unidade);
-      default:
-        return b.percentual - a.percentual || a.unidade.localeCompare(b.unidade);
-    }
-  });
-  const rankingVisivel = statusFiltro ? ranking.filter((l) => l.status === statusFiltro) : ranking;
+  // Motivos → lojas e motivo → lojas (mesmos dados do período; reconciliam com o total do escopo).
+  const linhasMotivos = compararMotivosCancelados(dados.atual, dados.comparacao, podeComparar, loja);
+  const motivosAtual = motivosCancelados(dados.atual, loja).map((m) => m.motivo);
+  const motivoAtivo = motivoSel && motivosAtual.includes(motivoSel) ? motivoSel : (motivosAtual[0] ?? null);
+  const lojasMotivo = motivoAtivo ? lojasDoMotivo(motivoAtivo, dados.atual, dados.comparacao, baseCobre, loja) : [];
+  function investigarMotivo(m: string) {
+    setMotivoSel(m);
+    requestAnimationFrame(() => document.getElementById(`cancelamento-motivo-${fonte}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+  const pctAtualValido = percentualCancelamentoValido(dados.atual, loja);
+  const pctCompValido = podeComparar ? percentualCancelamentoValido(dados.comparacao, loja) : null;
+  const totalSecao = {
+    valor: atual.valor,
+    comparado: podeComparar ? comp.valor : null,
+    percentual: pctAtualValido,
+    variacaoPp: pctAtualValido !== null && pctCompValido !== null ? pctAtualValido - pctCompValido : null,
+    situacao: situacaoPorPercentual({ valorAtual: atual.valor, valorComparado: podeComparar ? comp.valor : null, percentualAtual: pctAtualValido, percentualComparado: pctCompValido }),
+  };
 
   const inputCls = "rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40";
   const periodoAtualTxt = `${diaMesAno(inicio)} a ${diaMesAno(fim)}`;
   const periodoCompTxt = `${diaMesAno(compInicio)} a ${diaMesAno(compFim)}`;
+  // Datas de OCORRÊNCIA (D-1) — as que de fato foram somadas; usadas nas seções novas para não confundir com a referência.
+  const ocorrAtualTxt = `${diaMesAno(dados.atual.inicioOcorrencia)} a ${diaMesAno(dados.atual.fimOcorrencia)}`;
+  const ocorrCompTxt = `${diaMesAno(dados.comparacao.inicioOcorrencia)} a ${diaMesAno(dados.comparacao.fimOcorrencia)}`;
 
   return (
     <div className="space-y-5 bg-ragga-bg">
@@ -326,7 +356,7 @@ export function CancelamentoPainel({
       <div className="flex flex-wrap items-end gap-x-6 gap-y-3 rounded-xl border border-ragga-blue/10 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(31,53,112,0.06)]">
         <div>
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-foreground/45">Período atual</p>
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <input type="date" value={inicio} onChange={(e) => alterarAtual(e.target.value, fim)} className={inputCls} />
             <span className="text-foreground/40">até</span>
             <input type="date" value={fim} onChange={(e) => alterarAtual(inicio, e.target.value)} className={inputCls} />
@@ -342,7 +372,7 @@ export function CancelamentoPainel({
             )}
             {compEhSugestao && <span className="normal-case tracking-normal text-foreground/40">(mês anterior sugerido)</span>}
           </p>
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <input type="date" value={compInicio} onChange={(e) => alterarComparacao(e.target.value, compFim)} className={inputCls} />
             <span className="text-foreground/40">até</span>
             <input type="date" value={compFim} onChange={(e) => alterarComparacao(compInicio, e.target.value)} className={inputCls} />
@@ -365,6 +395,12 @@ export function CancelamentoPainel({
         Regra D-1 da aba: ocorrências de {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
         {diaMesAno(dados.comparacao.inicioOcorrencia)} a {diaMesAno(dados.comparacao.fimOcorrencia)}).
       </p>
+
+      {dados.conectado && atual.disponivel && comp.disponivel && !comparab.valida && (
+        <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
+          ⚠ Comparação com o período comparado não é válida: {comparab.motivo} Variações e comparativos ficam como “Sem base”.
+        </div>
+      )}
 
       {!dados.conectado && (
         <div className="rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
@@ -449,43 +485,39 @@ export function CancelamentoPainel({
         </p>
       </div>
 
-      {/* 2) COMPARAÇÃO POR MOTIVO */}
-      <Secao titulo="📋 Comparação por motivo">
-        <div className="mb-3 grid gap-1 text-xs text-foreground/60 sm:grid-cols-2">
-          <p>
-            <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt}
-          </p>
-          <p>
-            <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt}
-          </p>
-        </div>
-        <TabelaComparativoMotivos atual={atual.motivos} comparado={comp.motivos} temBase={comp.disponivel} pctAtual={atual.percentual} pctComparado={comp.percentual} />
-        <p className="mt-2 text-[11px] text-foreground/40">
-          Percentual sobre o valor do período comparado; participação = motivo ÷ total de cancelamentos do período. Motivos: 🟢 redução = melhorou · 🔴 aumento = piorou · ⚪ sem alteração. A linha TOTAL segue o % sobre o faturamento.
-        </p>
-      </Secao>
+      {/* 2) O QUE GEROU OS CANCELAMENTOS? — motivos (como na base) → lojas; reconcilia com o total dos cards */}
+      <SecaoMotivosCancelamento
+        linhas={linhasMotivos}
+        total={totalSecao}
+        comparavel={podeComparar}
+        motivoSemComparacao={atual.disponivel && comp.disponivel ? comparab.motivo : "Sem registros de cancelamento em um dos períodos."}
+        periodoAtualTxt={ocorrAtualTxt}
+        periodoCompTxt={ocorrCompTxt}
+        escopoTxt={loja === "TODAS" ? "rede" : loja}
+        rotulo={rotulo}
+        motivoSelecionado={motivoAtivo}
+        aoInvestigar={investigarMotivo}
+      />
 
-      {/* 3) EVOLUÇÃO POR DIA */}
-      <Secao titulo="📈 Evolução por dia" acao={<ToggleModo modo={modoGrafico} aoAlterar={setModoGrafico} />}>
-        <Evolucao dias={atual.diario} modo={modoGrafico} rotulo={rotulo} />
-      </Secao>
-
-      {/* 4) RANKING DE LOJAS */}
+      {/* 3) COMPARATIVO DE CANCELAMENTOS POR LOJA — valor absoluto e proporção (% s/ faturamento) lado a lado */}
       <Secao
-        titulo={`🏪 Ranking de ${rotulo.toLowerCase()} por loja`}
+        titulo="Comparativo de cancelamentos por loja"
         acao={
           <label className="flex items-center gap-2 text-xs font-medium text-ragga-blue-dark">
             Ordenar por
             <select value={ordem} onChange={(e) => setOrdem(e.target.value as OrdemRanking)} className="rounded-md border border-ragga-blue/15 bg-white px-2 py-1.5 text-xs">
-              <option value="valor">Valor</option>
-              <option value="percentual">Porcentagem</option>
+              <option value="valor">Valor cancelado (R$)</option>
+              <option value="percentual">% sobre o faturamento</option>
+              <option value="variacao">Variação vs. período comparado (R$)</option>
               <option value="loja">Loja</option>
-              <option value="criticidade">Performance / Criticidade</option>
+              <option value="criticidade">Status (semáforo)</option>
             </select>
           </label>
         }
       >
-        <p className="mb-3 text-[11px] text-foreground/45">Status = % de cancelamentos sobre o faturamento da loja, pelos limites já existentes do indicador.</p>
+        <p className="mb-3 text-[11px] text-foreground/45">
+          Valor absoluto e proporção são mostrados separadamente: a loja de maior valor não é, por isso, a pior. Status = % de cancelamentos sobre o faturamento da loja, pelos limites já existentes do indicador; a situação (melhorou/piorou) também é pelo %.
+        </p>
         <div className="mb-4 flex flex-wrap gap-2">
           {(["excelente", "bom", "atencao", "critico"] as const).map((s) => (
             <button
@@ -511,26 +543,27 @@ export function CancelamentoPainel({
         </div>
 
         <div className="-mx-5 overflow-x-auto sm:-mx-6">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
                 <th className="px-5 py-2.5 sm:px-6">Loja</th>
-                <th className="px-4 py-2.5">Total cancelamentos</th>
-                <th className="px-4 py-2.5">% canc. / fat.</th>
+                <th className="px-4 py-2.5">Total cancelado</th>
+                <th className="px-4 py-2.5">Faturamento da loja</th>
+                <th className="px-4 py-2.5">% canc. s/ fat.</th>
+                <th className="px-4 py-2.5">Comparado e variação (R$, % do valor)</th>
                 <th className="px-4 py-2.5">Status</th>
               </tr>
             </thead>
             <tbody>
               {rankingVisivel.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-5 py-6 text-center text-sm text-foreground/45 sm:px-6">
+                  <td colSpan={6} className="px-5 py-6 text-center text-sm text-foreground/45 sm:px-6">
                     Nenhuma loja neste filtro.
                   </td>
                 </tr>
               ) : (
                 rankingVisivel.map((l) => {
                   const aberta = lojasAbertas.has(l.unidade);
-                  const compLoja = dados.comparacao.porLoja.find((x) => x.unidade === l.unidade);
                   return (
                     <Fragment key={l.unidade}>
                       <tr onClick={() => alternarLoja(l.unidade)} className="cursor-pointer border-b border-ragga-blue/5 hover:bg-ragga-blue/[0.04]">
@@ -538,18 +571,37 @@ export function CancelamentoPainel({
                           <span className="mr-1.5 inline-block w-3 text-ragga-blue/45">{aberta ? "▾" : "▸"}</span>
                           {l.unidade}
                         </td>
-                        <td className="px-4 py-3 tabular-nums text-foreground/80">{moeda.format(l.valor)}</td>
-                        <td className="px-4 py-3 tabular-nums font-semibold text-ragga-blue-dark">{pct.format(l.percentual)}%</td>
+                        <td className="px-4 py-3 tabular-nums font-semibold text-foreground/80">{moeda.format(l.valor)}</td>
+                        <td className="px-4 py-3 tabular-nums text-foreground/70">{moeda.format(l.faturamento)}</td>
+                        <td className="px-4 py-3 tabular-nums font-semibold text-ragga-blue-dark">
+                          {l.percentual === null ? (
+                            <span className="text-xs font-semibold text-semaforo-amarelo">
+                              ⚠ faturamento em {l.diasComFaturamento} de {l.diasDoPeriodo} dias
+                            </span>
+                          ) : (
+                            `${pct.format(l.percentual)}%`
+                          )}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums">
+                          <div className="flex flex-col items-start gap-1">
+                            <CelulaComparado comparado={l.comparado} reais={l.variacaoReais} percentual={l.variacaoPercentual} />
+                            {l.comparado !== null && <BadgeSituacao situacao={l.situacao} pp={l.variacaoPp} />}
+                          </div>
+                        </td>
                         <td className="px-4 py-3">
-                          <SemaforoBadge cor={l.cor} texto={`${ESTILO_CHIP[l.status].emoji} ${ROTULO_STATUS_CANCELAMENTO[l.status]}`} />
+                          {l.coberturaParcial ? (
+                            <span className="text-xs font-semibold text-semaforo-amarelo">⚠ Cobertura parcial</span>
+                          ) : (
+                            <SemaforoBadge cor={l.loja.cor} texto={`${ESTILO_CHIP[l.status].emoji} ${ROTULO_STATUS_CANCELAMENTO[l.status]}`} />
+                          )}
                         </td>
                       </tr>
                       {aberta && (
                         <tr>
-                          <td colSpan={4} className="bg-ragga-bg/60 px-5 py-4 sm:px-6">
+                          <td colSpan={6} className="bg-ragga-bg/60 px-5 py-4 sm:px-6">
                             <DetalheLoja
-                              loja={l}
-                              compLoja={compLoja}
+                              loja={l.loja}
+                              compLoja={l.compLoja ?? undefined}
                               rotulo={rotulo}
                               indicadorOrientacao={indicadorOrientacao}
                               dataOcorrencia={dataDoInput(dados.atual.fimOcorrencia)}
@@ -566,7 +618,82 @@ export function CancelamentoPainel({
             </tbody>
           </table>
         </div>
+        <p className="mt-3 text-[11px] text-foreground/40">
+          Comparado: {ocorrCompTxt} (datas de ocorrência). Variação e situação só aparecem com a base e o faturamento completos da loja nos dois períodos. Loja com faturamento em menos dias que o período fica sem % e sem status (valores em R$ mantidos).
+        </p>
       </Secao>
+
+      {/* 4) INVESTIGAR POR MOTIVO — compara lojas dentro do mesmo motivo */}
+      <div id={`cancelamento-motivo-${fonte}`} className="scroll-mt-4">
+        <SecaoInvestigarMotivo
+          motivos={motivosAtual}
+          selecionado={motivoAtivo}
+          aoSelecionar={setMotivoSel}
+          lojas={lojasMotivo}
+          periodoAtualTxt={ocorrAtualTxt}
+          periodoCompTxt={ocorrCompTxt}
+          comparavel={baseCobre}
+          rotulo={rotulo}
+        />
+      </div>
+
+      {/* DETALHAMENTO — comparativo dos períodos e evolução diária */}
+      <Secao titulo="Comparativo de períodos">
+        <div className="mb-3 grid gap-1 text-xs text-foreground/60 sm:grid-cols-2">
+          <p>
+            <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt} (ocorrências {ocorrAtualTxt})
+          </p>
+          <p>
+            <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt} (ocorrências {ocorrCompTxt})
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm tabular-nums">
+            <thead>
+              <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
+                <th className="py-2 pr-4">Indicador</th>
+                <th className="px-3 py-2">Atual</th>
+                <th className="px-3 py-2">Comparado</th>
+                <th className="px-3 py-2">Variação em R$ (e % do valor)</th>
+                <th className="px-3 py-2">Situação</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-ragga-blue/5">
+                <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">Faturamento</td>
+                <td className="px-3">{atual.disponivel ? moeda.format(atual.faturamento) : "Sem dados"}</td>
+                <td className="px-3">{podeComparar ? moeda.format(comp.faturamento) : "Sem base"}</td>
+                <td className="px-3">{podeComparar ? <Var reais={Math.round((atual.faturamento - comp.faturamento) * 100) / 100} percentual={comp.faturamento !== 0 ? ((atual.faturamento - comp.faturamento) / comp.faturamento) * 100 : null} interpretar={false} /> : <span className="text-foreground/40">—</span>}</td>
+                <td className="px-3 text-xs text-foreground/40">Variação factual</td>
+              </tr>
+              <tr className="border-b border-ragga-blue/5">
+                <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">❌ Total — {rotulo}</td>
+                <td className="px-3">{atual.disponivel ? moeda.format(atual.valor) : "Sem dados"}</td>
+                <td className="px-3">{podeComparar ? moeda.format(comp.valor) : "Sem base"}</td>
+                <td className="px-3">{podeComparar ? <Var reais={Math.round((atual.valor - comp.valor) * 100) / 100} percentual={comp.valor !== 0 ? ((atual.valor - comp.valor) / comp.valor) * 100 : null} interpretar={false} /> : <span className="text-foreground/40">—</span>}</td>
+                <td className="px-3">
+                  <BadgeSituacao situacao={totalSecao.situacao} pp={totalSecao.variacaoPp} />
+                </td>
+              </tr>
+              <tr>
+                <td className="py-2.5 pr-4 font-semibold text-ragga-blue-dark">% sobre o faturamento</td>
+                <td className="px-3">{pctAtualValido === null ? "—" : `${pct.format(pctAtualValido)}%`}</td>
+                <td className="px-3">{pctCompValido === null ? "—" : `${pct.format(pctCompValido)}%`}</td>
+                <td className="px-3">{totalSecao.variacaoPp === null ? <span className="text-foreground/40">—</span> : <VariacaoPp atual={pctAtualValido ?? 0} anterior={pctCompValido ?? 0} interpretar />}</td>
+                <td className="px-3">
+                  <BadgeSituacao situacao={totalSecao.situacao} />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[11px] text-foreground/40">Melhorou/piorou pelo % sobre o faturamento (menor = melhorou), nunca só pelo valor em R$. Sem cobertura completa da base e do faturamento, a comparação não é exibida.</p>
+      </Secao>
+
+      <Secao titulo="📈 Evolução por dia" acao={<ToggleModo modo={modoGrafico} aoAlterar={setModoGrafico} />}>
+        <Evolucao dias={atual.diario} modo={modoGrafico} rotulo={rotulo} />
+      </Secao>
+
     </div>
   );
 }

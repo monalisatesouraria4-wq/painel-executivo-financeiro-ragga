@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db/client";
 import { dataDMenos1 } from "@/lib/rules/datas";
 import { unidades, faturamento, cancelamentoSalao, cancelamentoDelivery } from "@/lib/db/schema";
 import { montarPeriodoCancelamento, type CancelamentoPainelData, type FonteCancelamentoPainel, type PeriodoCancelamento } from "./cancelamentoPainel";
+import type { BaseCobertura } from "./resumoSemanal";
 
 /**
  * Consulta real do painel de Cancelamento (Salão/Delivery). Só importado por Server Components/Server Actions.
@@ -50,6 +51,13 @@ async function buscarPeriodo(
   );
 }
 
+/** Menor/maior data da base da fonte (uma agregação simples, só leitura) — base da validação de cobertura. */
+async function buscarCobertura(db: ReturnType<typeof getDb>, fonte: FonteCancelamentoPainel): Promise<BaseCobertura> {
+  const tabela = TABELAS[fonte];
+  const [r] = await db.select({ min: sql<string | null>`min(${tabela.data})::text`, max: sql<string | null>`max(${tabela.data})::text` }).from(tabela);
+  return { min: r?.min ?? null, max: r?.max ?? null };
+}
+
 export async function buscarCancelamentoPainel(
   fonte: FonteCancelamentoPainel,
   atualInicio: Date,
@@ -60,12 +68,13 @@ export async function buscarCancelamentoPainel(
   const conectado = Boolean(process.env.DATABASE_URL);
   if (!conectado) {
     const vazio = montarPeriodoCancelamento(iso(dataDMenos1(atualInicio)), iso(dataDMenos1(atualFim)), [], []);
-    return { conectado, atual: vazio, comparacao: vazio };
+    return { conectado, cobertura: { min: null, max: null }, atual: vazio, comparacao: vazio };
   }
   const db = getDb();
-  const [atual, comparacao] = await Promise.all([
+  const [atual, comparacao, cobertura] = await Promise.all([
     buscarPeriodo(db, fonte, atualInicio, atualFim),
     buscarPeriodo(db, fonte, comparacaoInicio, comparacaoFim),
+    buscarCobertura(db, fonte),
   ]);
-  return { conectado, atual, comparacao };
+  return { conectado, cobertura, atual, comparacao };
 }

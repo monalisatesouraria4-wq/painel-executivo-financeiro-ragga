@@ -12,7 +12,7 @@ import type { LojaNaModalidade, MotivoComparado } from "@/lib/services/brindesAn
 const sinal = (v: number) => (v > 0 ? "+" : v < 0 ? "-" : "");
 
 /** Variação R$ + %: `interpretar` (modalidade controlável) pinta redução de verde e aumento de vermelho; demais, cinza (factual). */
-function Var({ reais, percentual, interpretar }: { reais: number | null; percentual: number | null; interpretar: boolean }) {
+export function Var({ reais, percentual, interpretar }: { reais: number | null; percentual: number | null; interpretar: boolean }) {
   if (reais === null) return <span className="text-foreground/40">—</span>;
   const cor = !interpretar || Math.abs(reais) < 0.005 ? "text-foreground/70" : reais < 0 ? "text-semaforo-verde" : "text-semaforo-vermelho";
   const seta = reais > 0 ? "↑" : reais < 0 ? "↓" : "=";
@@ -24,7 +24,7 @@ function Var({ reais, percentual, interpretar }: { reais: number | null; percent
   );
 }
 
-function Barra({ valor }: { valor: number }) {
+export function Barra({ valor }: { valor: number }) {
   return (
     <div className="mt-1 h-1.5 w-full max-w-[140px] overflow-hidden rounded-full bg-ragga-blue/10" aria-hidden>
       <div className="h-full rounded-full bg-ragga-blue" style={{ width: `${Math.min(100, Math.max(0, valor))}%` }} />

@@ -21,7 +21,7 @@ const TOLERANCIA = 0.005;
 // ───────────── Cobertura / comparabilidade ─────────────
 
 /** Dias com faturamento (> 0) da loja em relação aos dias do período. Parcial ou ausente = % não representa o período. */
-export function coberturaFaturamentoLoja(l: Pick<LojaBrindes, "diario"> | undefined | null): { dias: number; total: number; completo: boolean } {
+export function coberturaFaturamentoLoja(l: { diario: { faturamento: number }[] } | undefined | null): { dias: number; total: number; completo: boolean } {
   if (!l) return { dias: 0, total: 0, completo: false };
   const dias = l.diario.filter((d) => d.faturamento > 0).length;
   return { dias, total: l.diario.length, completo: l.diario.length > 0 && dias === l.diario.length };

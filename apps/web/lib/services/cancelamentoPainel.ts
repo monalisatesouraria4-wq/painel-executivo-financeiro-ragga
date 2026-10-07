@@ -8,6 +8,7 @@ import {
   type MotivoCompraDireta,
   type PeriodoCompraDireta,
 } from "@/lib/services/compraDiretaPainel";
+import type { BaseCobertura } from "@/lib/services/resumoSemanal";
 
 /**
  * Painel de performance da aba Cancelamento Salão (Indicadores). Tipos e agregação PURA — sem import de banco.
@@ -57,6 +58,8 @@ export interface PeriodoCancelamento extends Omit<PeriodoCompraDireta, "status" 
 
 export interface CancelamentoPainelData {
   conectado: boolean;
+  /** Menor/maior data de ocorrência da base desta fonte (para validar a cobertura do período e da comparação). */
+  cobertura: BaseCobertura;
   atual: PeriodoCancelamento;
   comparacao: PeriodoCancelamento;
 }
