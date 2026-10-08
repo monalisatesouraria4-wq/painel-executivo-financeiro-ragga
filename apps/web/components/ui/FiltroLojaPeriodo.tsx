@@ -45,7 +45,7 @@ export function FiltroLojaPeriodo({
         </select>
       </label>
 
-      <label className="flex items-center gap-2 text-sm font-medium text-ragga-blue-dark">
+      <label className="flex flex-wrap items-center gap-2 text-sm font-medium text-ragga-blue-dark">
         📅 Período
         <input
           type="date"

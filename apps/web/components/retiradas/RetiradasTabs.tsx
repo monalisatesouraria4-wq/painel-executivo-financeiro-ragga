@@ -27,12 +27,15 @@ export function RetiradasTabs({
   compraDiretaPainel,
   periodoCompraDireta,
   dataInicial,
+  intervaloDeposito = null,
   subAbaInicial = "deposito",
   lojaInicial = "TODAS",
 }: {
   compraDiretaPainel: CompraDiretaPainelData;
   periodoCompraDireta: { inicio: string; fim: string; compInicio: string; compFim: string };
   dataInicial: Date;
+  /** Intervalo real da base de DEPÓSITO (primeiro e último dia): período inicial da sub-aba (em vez de "hoje", que abriria vazia). */
+  intervaloDeposito?: { inicio: string; fim: string } | null;
   /** Sub-aba aberta ao entrar (navegação por ?fonte=compraDireta). */
   subAbaInicial?: SubAba;
   /** Loja pré-selecionada no painel de Compra Direta (navegação por ?loja=). */
@@ -40,8 +43,8 @@ export function RetiradasTabs({
 }) {
   const [subAtiva, setSubAtiva] = useState<SubAba>(subAbaInicial);
   const [unidade, setUnidade] = useState<string>("TODAS");
-  const [dataInicio, setDataInicio] = useState(() => paraInputDate(dataInicial));
-  const [dataFim, setDataFim] = useState(() => paraInputDate(dataInicial));
+  const [dataInicio, setDataInicio] = useState(() => intervaloDeposito?.inicio ?? paraInputDate(dataInicial));
+  const [dataFim, setDataFim] = useState(() => intervaloDeposito?.fim ?? paraInputDate(dataInicial));
 
   const unidadeFiltro = unidade !== "TODAS" ? (unidade as CodigoUnidade) : undefined;
 

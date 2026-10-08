@@ -2,6 +2,8 @@ import { UNIDADES } from "@painel/shared";
 import { Header } from "@/components/layout/Header";
 import { RetiradasTabs } from "@/components/retiradas/RetiradasTabs";
 import { buscarCompraDiretaPainel } from "@/lib/services/compraDiretaPainel.server";
+import { buscarCoberturaDeposito } from "@/lib/services/retiradaDepositoPainel.server";
+import { intervaloInicialDeposito } from "@/lib/services/retiradaDepositoAnalise";
 import { periodoComparacaoPadrao, ultimoMesFechado } from "@/lib/rules/mesAnterior";
 
 /**
@@ -44,7 +46,10 @@ export default async function RetiradasPage({
   const dataInicial = new Date();
   const atual = periodoInformado ? { inicio: dataDoInput(inicioParam!), fim: dataDoInput(fimParam!) } : ultimoMesFechado(dataInicial);
   const comparacao = periodoComparacaoPadrao(atual.inicio, atual.fim);
-  const painel = await buscarCompraDiretaPainel(atual.inicio, atual.fim, comparacao.inicio, comparacao.fim);
+  const [painel, coberturaDeposito] = await Promise.all([
+    buscarCompraDiretaPainel(atual.inicio, atual.fim, comparacao.inicio, comparacao.fim),
+    buscarCoberturaDeposito(),
+  ]);
 
   return (
     <>
@@ -53,6 +58,7 @@ export default async function RetiradasPage({
         compraDiretaPainel={painel}
         periodoCompraDireta={{ inicio: iso(atual.inicio), fim: iso(atual.fim), compInicio: iso(comparacao.inicio), compFim: iso(comparacao.fim) }}
         dataInicial={dataInicial}
+        intervaloDeposito={intervaloInicialDeposito(coberturaDeposito)}
         subAbaInicial={subAbaInicial}
         lojaInicial={lojaInicial}
       />
