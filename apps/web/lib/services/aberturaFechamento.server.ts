@@ -58,6 +58,7 @@ export async function buscarAberturaFechamento(dataSelecionada: Date): Promise<A
   const rows = await db
     .select({
       codigo: unidades.codigo,
+      dataIso: sql<string>`${fechamentoCaixa.data}::text`,
       caixa: fechamentoCaixa.caixa,
       movimento: fechamentoCaixa.movimento,
       abertura: fechamentoCaixa.abertura,
@@ -71,10 +72,11 @@ export async function buscarAberturaFechamento(dataSelecionada: Date): Promise<A
     .from(fechamentoCaixa)
     .innerJoin(unidades, eq(fechamentoCaixa.unidadeId, unidades.id))
     .where(eq(fechamentoCaixa.data, dataSelecionada))
-    .orderBy(unidades.codigo, fechamentoCaixa.caixa);
+    .orderBy(unidades.codigo, fechamentoCaixa.data, fechamentoCaixa.caixa, fechamentoCaixa.movimento);
 
   const linhas: CaixaAberturaFechamentoLinha[] = rows.map((r) => ({
     unidade: r.codigo as CodigoUnidade,
+    data: r.dataIso,
     caixa: r.caixa,
     movimento: r.movimento,
     operador: r.operador,
@@ -162,6 +164,7 @@ export async function buscarAberturaFechamentoIntervalo(
   const rows = await db
     .select({
       codigo: unidades.codigo,
+      dataIso: sql<string>`${fechamentoCaixa.data}::text`,
       caixa: fechamentoCaixa.caixa,
       movimento: fechamentoCaixa.movimento,
       abertura: fechamentoCaixa.abertura,
@@ -179,10 +182,11 @@ export async function buscarAberturaFechamentoIntervalo(
         ? and(between(fechamentoCaixa.data, inicio, fim), eq(fechamentoCaixa.unidadeId, unidadeId))
         : between(fechamentoCaixa.data, inicio, fim)
     )
-    .orderBy(unidades.codigo, fechamentoCaixa.caixa);
+    .orderBy(unidades.codigo, fechamentoCaixa.data, fechamentoCaixa.caixa, fechamentoCaixa.movimento);
 
   const linhas: CaixaAberturaFechamentoLinha[] = rows.map((r) => ({
     unidade: r.codigo as CodigoUnidade,
+    data: r.dataIso,
     caixa: r.caixa,
     movimento: r.movimento,
     operador: r.operador,

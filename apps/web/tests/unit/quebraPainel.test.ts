@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agregarQuebra, ordenarLojasQuebra, recortarLoja, situacaoQuebra, type LinhaQuebraBruta } from "@/lib/services/quebraPainel";
+import { agregarQuebra, barrasQuebraPorMotivo, fatiasQuebraPorLoja, ordenarLojasQuebra, percentualSobreFaturamento, recortarLoja, situacaoQuebra, type LinhaQuebraBruta } from "@/lib/services/quebraPainel";
 
 const l = (unidade: string, operador: string, motivo: string, valor: number, cpf = "000"): LinhaQuebraBruta => ({ unidade, operador, cpf: cpf + operador, motivo, valor });
 
@@ -84,5 +84,95 @@ describe("situação e ordenação reais", () => {
     const perf = ordenarLojasQuebra(lojas, comp, "performance").map((x) => x.unidade);
     expect(perf[0]).toBe("BG 01"); // única que piorou
     expect(perf).toHaveLength(3);
+  });
+});
+
+describe("% da quebra sobre o faturamento — card geral e tabela por loja", () => {
+  const fat = { "BG 01": 10000, "BG 02": 5000, "BG 03": 2000 };
+  const p = agregarQuebra(atualLinhas, fat); // quebra: BG 01 = 100, BG 02 = 100, BG 03 = 10
+
+  it("soma das lojas = total geral da quebra e do faturamento", () => {
+    expect(p.porLoja.reduce((s, x) => s + x.valor, 0)).toBe(p.valor);
+    expect(p.porLoja.reduce((s, x) => s + x.faturamento, 0)).toBe(p.faturamento);
+    expect(p.valor).toBe(210);
+    expect(p.faturamento).toBe(17000);
+  });
+
+  it("percentual geral = quebra total ÷ faturamento total × 100; individual usa a MESMA loja", () => {
+    const g = percentualSobreFaturamento(p.valor, p.faturamento, false);
+    expect(g.estado).toBe("ok");
+    expect(g.percentual).toBeCloseTo((210 / 17000) * 100, 9);
+    const esperado: Record<string, number> = { "BG 01": 1, "BG 02": 2, "BG 03": 0.5 };
+    for (const x of p.porLoja) expect(percentualSobreFaturamento(x.valor, x.faturamento, false).percentual).toBeCloseTo(esperado[x.unidade], 9);
+  });
+
+  it("faturamento zero, ausente ou inválido → indisponível (nunca 0%); carregando → sem valor e sem erro", () => {
+    expect(percentualSobreFaturamento(100, 0, false)).toEqual({ estado: "indisponivel", percentual: null });
+    expect(percentualSobreFaturamento(100, null, false)).toEqual({ estado: "indisponivel", percentual: null });
+    expect(percentualSobreFaturamento(100, undefined, false)).toEqual({ estado: "indisponivel", percentual: null });
+    expect(percentualSobreFaturamento(100, Number.NaN, false)).toEqual({ estado: "indisponivel", percentual: null });
+    expect(percentualSobreFaturamento(100, 5000, true)).toEqual({ estado: "carregando", percentual: null });
+    expect(percentualSobreFaturamento(100, 0, true).estado).toBe("carregando");
+  });
+
+  it("loja sem faturamento na base: faturamento 0 → percentual indisponível; as demais seguem calculadas", () => {
+    const sem = agregarQuebra(atualLinhas, { "BG 01": 10000 });
+    const bg02 = sem.porLoja.find((x) => x.unidade === "BG 02");
+    expect(bg02?.faturamento).toBe(0);
+    expect(percentualSobreFaturamento(bg02!.valor, bg02!.faturamento, false).estado).toBe("indisponivel");
+    expect(percentualSobreFaturamento(100, 10000, false).percentual).toBeCloseTo(1, 9);
+  });
+
+  it("filtro de loja: card e tabela recalculam só sobre a loja", () => {
+    const so = recortarLoja(p, "BG 02");
+    expect(percentualSobreFaturamento(so.valor, so.faturamento, false).percentual).toBeCloseTo(2, 9);
+    expect(so.porLoja).toHaveLength(1);
+  });
+});
+
+describe("gráficos de Quebra — rosca por loja e barras por motivo", () => {
+  const p = agregarQuebra(atualLinhas, { "BG 01": 10000, "BG 02": 5000, "BG 03": 2000 });
+  // lojas: BG 01 = 100, BG 02 = 100, BG 03 = 10 · motivos: FALTA DE DINHEIRO = 150, TROCO ERRADO = 60 (total 210)
+
+  it("rosca: só lojas com quebra, maior valor primeiro, participação sobre o total do mesmo recorte (soma = 100%)", () => {
+    const f = fatiasQuebraPorLoja(p.porLoja, p.valor);
+    expect(f.map((x) => x.unidade)).toEqual(["BG 01", "BG 02", "BG 03"]);
+    expect(f.reduce((s, x) => s + x.valor, 0)).toBe(p.valor);
+    expect(f.reduce((s, x) => s + x.participacao, 0)).toBeCloseTo(100, 9);
+    expect(f[2].participacao).toBeCloseTo((10 / 210) * 100, 9);
+    const comZero = agregarQuebra(atualLinhas, { "BG 01": 10000, "BG 04": 3000 }); // BG 04: faturamento sem quebra
+    expect(fatiasQuebraPorLoja(comZero.porLoja, comZero.valor).map((x) => x.unidade)).not.toContain("BG 04");
+  });
+
+  it("barras: motivos reais da base, maior primeiro, % do mesmo total; sem comparação não há variação", () => {
+    const b = barrasQuebraPorMotivo(p.motivos, null, false, p.valor);
+    expect(b.map((x) => [x.motivo, x.valor])).toEqual([["FALTA DE DINHEIRO", 150], ["TROCO ERRADO", 60]]);
+    expect(b[0].percentual).toBeCloseTo((150 / 210) * 100, 9);
+    expect(b.reduce((s, x) => s + x.percentual, 0)).toBeCloseTo(100, 9);
+    expect(b.every((x) => x.variacaoValor === null && x.variacaoPercentual === null)).toBe(true);
+  });
+
+  it("barras: variação só com base válida; motivo ausente no comparado = 0 (variação % indefinida)", () => {
+    const comparada = agregarQuebra([l("BG 01", "ANA", "FALTA DE DINHEIRO", 100)], {});
+    const b = barrasQuebraPorMotivo(p.motivos, comparada.motivos, true, p.valor);
+    expect(b[0]).toMatchObject({ motivo: "FALTA DE DINHEIRO", variacaoValor: 50 });
+    expect(b[0].variacaoPercentual).toBeCloseTo(50, 9);
+    expect(b[1]).toMatchObject({ motivo: "TROCO ERRADO", variacaoValor: 60, variacaoPercentual: null });
+    expect(barrasQuebraPorMotivo(p.motivos, comparada.motivos, false, p.valor)[0].variacaoValor).toBeNull();
+  });
+
+  it("sem dados ou total zero: estado vazio, sem percentuais inventados", () => {
+    const vazio = agregarQuebra([], {});
+    expect(fatiasQuebraPorLoja(vazio.porLoja, vazio.valor)).toEqual([]);
+    expect(barrasQuebraPorMotivo(vazio.motivos, null, false, vazio.valor)).toEqual([]);
+  });
+
+  it("filtro de loja: os dois gráficos usam só a loja e o total dela", () => {
+    const so = recortarLoja(p, "BG 01");
+    const f = fatiasQuebraPorLoja(so.porLoja, so.valor);
+    expect(f).toHaveLength(1);
+    expect(f[0].participacao).toBeCloseTo(100, 9);
+    const b = barrasQuebraPorMotivo(so.motivos, null, false, so.valor);
+    expect(b.reduce((s, x) => s + x.valor, 0)).toBe(so.valor);
   });
 });

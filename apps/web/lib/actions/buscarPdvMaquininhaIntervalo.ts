@@ -9,8 +9,9 @@ import type { ControlesCaixaData } from "@/lib/services/controlesCaixa";
 export async function buscarPdvMaquininhaIntervalo(
   inicio: Date,
   fim: Date,
-  unidade?: CodigoUnidade
+  unidade?: CodigoUnidade,
+  formas?: string[]
 ): Promise<ControlesCaixaData["pdvMaquininha"]> {
   if (!process.env.DATABASE_URL) return { disponivel: false, totalPdvRede: null, totalMaquininhaRede: null, diferencaRede: null, linhas: [] };
-  return buscarPdvMaquininhaIntervaloNoBanco(getDb(), inicio, fim, unidade);
+  return buscarPdvMaquininhaIntervaloNoBanco(getDb(), inicio, fim, unidade, formas);
 }

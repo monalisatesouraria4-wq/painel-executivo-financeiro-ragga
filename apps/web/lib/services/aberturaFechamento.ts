@@ -21,6 +21,8 @@ import type { CodigoUnidade } from "@painel/shared";
  */
 export interface CaixaAberturaFechamentoLinha {
   unidade: CodigoUnidade;
+  /** Data de referência do registro (AAAA-MM-DD) = dia da ABERTURA do caixa, como na base (`fechamento_caixa.data`). */
+  data?: string;
   caixa: string;
   movimento: string;
   operador: string | null;

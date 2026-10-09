@@ -1,6 +1,7 @@
 import { normalizarUnidade } from "../normalizarUnidade";
 import { parseDataCelula, parseValorCelula, parseTextoCelula } from "../parseCelula";
 import { localizarColuna } from "../localizarColuna";
+import { localizarColunaFormaPdv, validarCabecalhoPdv } from "../conferenciaPdv";
 import type { ResultadoParse, RegistroBase } from "../tipos";
 
 /**
@@ -22,12 +23,21 @@ import type { ResultadoParse, RegistroBase } from "../tipos";
 export function parsePdvMaquininha(cabecalho: unknown[], linhas: unknown[][]): ResultadoParse {
   const idxLoja = localizarColuna(cabecalho, "LOJA");
   const idxData = localizarColuna(cabecalho, "DATA");
-  const idxForma = localizarColuna(cabecalho, "FORMA DE PAG");
+  // A coluna de forma pode se chamar "Forma de Pag." (layout antigo) ou "Tipo_Pagamento" (extração atual do Power BI).
+  const idxForma = localizarColunaFormaPdv(cabecalho);
   const idxPdv = localizarColuna(cabecalho, "VENDA");
   const idxMaquininha = localizarColuna(cabecalho, "TOTAL MAQ");
   const idxDiferenca = localizarColuna(cabecalho, "DIFEREN"); // "Diferença" sem acento na busca
 
   const resultado: ResultadoParse = { registros: [], rejeitados: [] };
+
+  // Sem TODAS as colunas obrigatórias nada é lido: antes, sem a coluna de forma as linhas entravam com forma vazia e a
+  // chave (loja+data+forma) as colapsava em uma só, gravando valores parciais.
+  const cabecalhoValido = validarCabecalhoPdv(cabecalho);
+  if (!cabecalhoValido.ok) {
+    resultado.rejeitados.push({ linhaOrigem: 1, motivo: `Coluna(s) obrigatória(s) ausente(s): ${cabecalhoValido.faltando.join(", ")}`, valoresBrutos: {} });
+    return resultado;
+  }
 
   linhas.forEach((linha, i) => {
     const linhaOrigem = i + 2;

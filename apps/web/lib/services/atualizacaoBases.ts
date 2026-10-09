@@ -51,6 +51,8 @@ interface ColunaObrigatoria {
   rotulo: string;
   coluna: string;
   exata: boolean;
+  /** Outros nomes aceitos para a mesma coluna (ex.: layout novo da extração). */
+  alternativas?: string[];
 }
 
 export interface BaseInfo {
@@ -167,7 +169,7 @@ export const BASE_REGISTRY: BaseInfo[] = [
     colunasObrigatorias: [
       { rotulo: "Loja", coluna: "LOJA", exata: false },
       { rotulo: "Data", coluna: "DATA", exata: false },
-      { rotulo: "Forma de Pag.", coluna: "FORMA DE PAG", exata: false },
+      { rotulo: "Forma de Pag. (ou Tipo_Pagamento)", coluna: "FORMA DE PAG", exata: false, alternativas: ["TIPO_PAGAMENTO", "TIPO PAGAMENTO"] },
       { rotulo: "Venda (PDV)", coluna: "VENDA", exata: false },
       { rotulo: "Total Maq.", coluna: "TOTAL MAQ", exata: false },
       { rotulo: "Diferença", coluna: "DIFEREN", exata: false },
@@ -214,11 +216,12 @@ export function buscarBaseInfo(id: BaseId): BaseInfo {
   return info;
 }
 
-function validarColunas(cabecalho: unknown[], colunas: ColunaObrigatoria[]): string[] {
+/** Rótulos das colunas obrigatórias NÃO encontradas (aceita os nomes alternativos de cada coluna). */
+export function validarColunas(cabecalho: unknown[], colunas: ColunaObrigatoria[]): string[] {
   const faltando: string[] = [];
   for (const col of colunas) {
-    const idx = col.exata ? localizarColunaExata(cabecalho, col.coluna) : localizarColuna(cabecalho, col.coluna);
-    if (idx === -1) faltando.push(col.rotulo);
+    const achou = [col.coluna, ...(col.alternativas ?? [])].some((nome) => (col.exata ? localizarColunaExata(cabecalho, nome) : localizarColuna(cabecalho, nome)) !== -1);
+    if (!achou) faltando.push(col.rotulo);
   }
   return faltando;
 }

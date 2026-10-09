@@ -37,6 +37,7 @@ import {
   type StatusCancelamento,
 } from "@/lib/services/cancelamentoPainel";
 import { buscarCancelamentoPainel } from "@/lib/actions/buscarCancelamentoPainel";
+import { coberturaFaturamentoLoja } from "@/lib/services/brindesAnalise";
 
 /**
  * Painel analítico de Cancelamento (hoje usado em Cancelamento Salão) — mesma experiência de Compra Direta e
@@ -311,6 +312,10 @@ export function CancelamentoPainel({
   // Comparação só vale com cobertura: base cobre os dois períodos e o faturamento (rede ou loja) está completo nos dois.
   const comparab = comparabilidadeCancelamento(dados, loja);
   const podeComparar = atual.disponivel && comp.disponivel && comparab.valida;
+  // Card Faturamento: valor já carregado; "—" se carregando, ausente ou zero; aviso discreto se há dias sem faturamento.
+  const faturamentoValido = !pendente && atual.faturamento > 0;
+  const coberturaFat = coberturaFaturamentoLoja(atual);
+  const faturamentoParcial = faturamentoValido && !coberturaFat.completo && coberturaFat.total > 0;
   const mesCompleto = completa(inicio) && completa(fim) && ehMesCalendarioCompleto(dataDoInput(inicio), dataDoInput(fim));
   const sugestaoMes = mesCompleto ? mesAnteriorCompleto(dataDoInput(inicio), dataDoInput(fim)) : null;
   const compEhSugestao = sugestaoMes && paraInputDate(sugestaoMes.inicio) === compInicio && paraInputDate(sugestaoMes.fim) === compFim;
@@ -409,7 +414,26 @@ export function CancelamentoPainel({
       )}
 
       {/* 1) CARDS — situação do período ATUAL; comparação no hover */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Faturamento do período: o MESMO `atual.faturamento` (período + loja selecionados) que é o denominador dos percentuais. */}
+        <CardGrande titulo="💰 Faturamento do período">
+          <p className="mt-1 text-[1.6rem] font-extrabold leading-tight text-ragga-blue-dark">{faturamentoValido ? moeda.format(atual.faturamento) : "—"}</p>
+          {pendente ? (
+            <p className="mt-2 text-xs text-foreground/45">Carregando...</p>
+          ) : !faturamentoValido ? (
+            <p className="mt-2 text-xs text-foreground/45">{textoSemDados}</p>
+          ) : (
+            <div className="mt-2 space-y-0.5 text-xs text-foreground/50">
+              <p>Base de cálculo dos percentuais.</p>
+              {faturamentoParcial && (
+                <p className="font-semibold text-semaforo-amarelo">
+                  ⚠ Faturamento incompleto: {coberturaFat.dias} de {coberturaFat.total} dias com faturamento no período.
+                </p>
+              )}
+            </div>
+          )}
+        </CardGrande>
+
         <CardHover
           tooltip={
             <TooltipComparativo periodo={periodoCompTxt} temBase={podeComparar}>

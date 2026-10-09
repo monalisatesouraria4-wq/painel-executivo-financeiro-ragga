@@ -7,7 +7,10 @@ import { periodoComparacaoPadrao } from "@/lib/rules/mesAnterior";
 import type { QuebraDetalheLinha } from "@/lib/services/controlesCaixa";
 import {
   agregarQuebra,
+  barrasQuebraPorMotivo,
+  fatiasQuebraPorLoja,
   ordenarLojasQuebra,
+  percentualSobreFaturamento,
   recortarLoja,
   situacaoLojaQuebra,
   situacaoQuebraDetalhada,
@@ -20,6 +23,7 @@ import {
   type QuebraComparativoDados,
 } from "@/lib/services/quebraPainel";
 import { buscarQuebraComparativo } from "@/lib/actions/buscarQuebraComparativo";
+import { QuebraGraficos } from "./QuebraGraficos";
 
 /**
  * Análise de Quebra de Caixa por LOJA (REDE → LOJA → OPERADOR/MOTIVO), com comparativo de período — substitui o
@@ -59,14 +63,18 @@ export function QuebraLojasPainel({
   detalhadoAtual,
   janela,
   lojaFiltro,
+  aoAtualizarFaturamento,
 }: {
   detalhadoAtual: QuebraDetalheLinha[];
   janela: { inicio: Date | null; fim: Date | null };
   /** Loja selecionada no filtro da aba (mostra só ela). */
   lojaFiltro?: string;
+  /** Informa ao componente pai o faturamento JÁ carregado aqui (única fonte; sem segunda consulta) e se ainda está carregando. */
+  aoAtualizarFaturamento?: (e: { carregando: boolean; faturamento: number }) => void;
 }) {
   const [compManual, setCompManual] = useState<{ inicio: string; fim: string } | null>(null);
   const [dados, setDados] = useState<QuebraComparativoDados | null>(null);
+  const [chaveDados, setChaveDados] = useState<string>("");
   const [ordem, setOrdem] = useState<OrdemUI>("valor");
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [pendente, iniciarTransicao] = useTransition();
@@ -82,9 +90,13 @@ export function QuebraLojasPainel({
   useEffect(() => {
     if (!janelaInicioIso || !janelaFimIso || !completa(compInicio) || !completa(compFim) || compInicio > compFim) return;
     const req = ++ultimaRequisicao.current;
+    const chave = `${janelaInicioIso}|${janelaFimIso}|${compInicio}|${compFim}`;
     iniciarTransicao(async () => {
       const r = await buscarQuebraComparativo(dataDoInput(janelaInicioIso), dataDoInput(janelaFimIso), dataDoInput(compInicio), dataDoInput(compFim));
-      if (req === ultimaRequisicao.current) setDados(r);
+      if (req === ultimaRequisicao.current) {
+        setDados(r);
+        setChaveDados(chave);
+      }
     });
   }, [janelaInicioIso, janelaFimIso, compInicio, compFim]);
 
@@ -103,6 +115,19 @@ export function QuebraLojasPainel({
     () => (dados ? recortarLoja(agregarQuebra(dados.comparacao.linhas, dados.comparacao.faturamento), lojaFiltro) : null),
     [dados, lojaFiltro]
   );
+
+  // Faturamento "carregando" = ainda não chegou a resposta do período/filtro atuais (evita mostrar 0,0% ou valor de outro período).
+  const chaveAtual = `${janelaInicioIso}|${janelaFimIso}|${compInicio}|${compFim}`;
+  const carregandoFat = !dados || chaveDados !== chaveAtual || pendente;
+  const fatTotal = atual.faturamento;
+  useEffect(() => {
+    aoAtualizarFaturamento?.({ carregando: carregandoFat, faturamento: fatTotal });
+  }, [aoAtualizarFaturamento, carregandoFat, fatTotal]);
+  const pctFat = (valor: number, fat: number) => {
+    const r = percentualSobreFaturamento(valor, fat, carregandoFat);
+    return r.percentual === null ? "—" : `${pct.format(r.percentual)}%`;
+  };
+  const algumaSemFaturamento = !carregandoFat && (atual.faturamento <= 0 || atual.porLoja.some((l) => l.faturamento <= 0));
 
   if (!janela.inicio || !janela.fim) {
     return (
@@ -137,8 +162,13 @@ export function QuebraLojasPainel({
 
   const inputCls = "rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40";
 
+  const fatiasLojas = fatiasQuebraPorLoja(atual.porLoja, atual.valor);
+  const barrasMotivos = barrasQuebraPorMotivo(atual.motivos, comparacao?.motivos ?? null, temBaseRede, atual.valor);
+
   return (
     <div className="space-y-5">
+      <QuebraGraficos fatias={fatiasLojas} barras={barrasMotivos} total={atual.valor} temComparacao={temBaseRede && !!comparacao} />
+
       <Secao
         titulo="🏪 Quebra de caixa por loja"
         acao={
@@ -185,7 +215,7 @@ export function QuebraLojasPainel({
         ) : (
           <div className="mb-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-7">
             <Item rotulo="Quebra atual" valor={moeda.format(atual.valor)} />
-            <Item rotulo="% do faturamento" valor={`${pct.format(atual.percentual)}%`} />
+            <Item rotulo="% do faturamento" valor={pctFat(atual.valor, atual.faturamento)} />
             <Item rotulo="Quebra comparada" valor={temBaseRede && comparacao ? moeda.format(comparacao.valor) : dados ? "Sem dados" : "…"} />
             <Item rotulo="% comparado" valor={temBaseRede && comparacao ? `${pct.format(comparacao.percentual)}%` : "—"} />
             <Item rotulo="Variação R$" valor={temBaseRede && comparacao ? `${atual.valor - comparacao.valor >= 0 ? "+" : "-"}${moeda.format(Math.abs(atual.valor - comparacao.valor))}` : "—"} />
@@ -214,6 +244,7 @@ export function QuebraLojasPainel({
               <tr className="border-b border-ragga-blue/10 text-left text-[11px] font-semibold uppercase tracking-wide text-foreground/45">
                 <th className="px-5 py-2.5 sm:px-6">Loja</th>
                 <th className="px-3 py-2.5">Quebra</th>
+                <th className="px-3 py-2.5">Faturamento</th>
                 <th className="px-3 py-2.5">% fat.</th>
                 <th className="px-3 py-2.5">Comparado</th>
                 <th className="px-3 py-2.5">% comp.</th>
@@ -225,7 +256,7 @@ export function QuebraLojasPainel({
             <tbody className="tabular-nums">
               {lojasOrdenadas.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-6 text-center text-sm text-foreground/45 sm:px-6">
+                  <td colSpan={9} className="px-5 py-6 text-center text-sm text-foreground/45 sm:px-6">
                     Sem dados no período.
                   </td>
                 </tr>
@@ -243,7 +274,8 @@ export function QuebraLojasPainel({
                           {l.unidade}
                         </td>
                         <td className="px-3 py-3 text-foreground/80">{moeda.format(l.valor)}</td>
-                        <td className="px-3 py-3 font-semibold text-ragga-blue-dark">{pct.format(l.percentual)}%</td>
+                        <td className="px-3 py-3 text-foreground/80">{carregandoFat || l.faturamento <= 0 ? "—" : moeda.format(l.faturamento)}</td>
+                        <td className="px-3 py-3 font-semibold text-ragga-blue-dark">{pctFat(l.valor, l.faturamento)}</td>
                         <td className="px-3 py-3 text-foreground/70">{temBase && c ? moeda.format(c.valor) : dados ? "Sem dados" : "…"}</td>
                         <td className="px-3 py-3 text-foreground/70">{temBase && c ? `${pct.format(c.percentual)}%` : "—"}</td>
                         <td className="px-3 py-3 text-foreground/70">{temBase ? `${dRs >= 0 ? "+" : "-"}${moeda.format(Math.abs(dRs))}` : "—"}</td>
@@ -254,8 +286,8 @@ export function QuebraLojasPainel({
                       </tr>
                       {aberta && (
                         <tr>
-                          <td colSpan={8} className="bg-ragga-bg/60 px-5 py-4 sm:px-6">
-                            <DetalheLoja loja={l} compLoja={c} temBase={temBase} periodoAtual={periodoAtualTxt} periodoComp={periodoCompTxt} />
+                          <td colSpan={9} className="bg-ragga-bg/60 px-5 py-4 sm:px-6">
+                            <DetalheLoja loja={l} compLoja={c} temBase={temBase} periodoAtual={periodoAtualTxt} periodoComp={periodoCompTxt} pctFat={pctFat(l.valor, l.faturamento)} fatCarregando={carregandoFat} />
                           </td>
                         </tr>
                       )}
@@ -266,6 +298,9 @@ export function QuebraLojasPainel({
             </tbody>
           </table>
         </div>
+        {algumaSemFaturamento && (
+          <p className="mt-2 text-[11px] text-foreground/50">— = faturamento do período ausente ou zero para a loja (ou rede): o percentual sobre o faturamento não pôde ser calculado.</p>
+        )}
         <p className="mt-2 text-[11px] text-foreground/40">
           Status = situação do % de quebra sobre o faturamento contra o período comparado: 🟢 Melhorou (diminuiu) · 🔴 Piorou (aumentou) · ⚪ Estável (igual no arredondamento) · ⚪ Sem ocorrência (nenhuma quebra nos dois períodos) · ⚪ Sem base de comparação. Não há meta/limite de Quebra cadastrado.
         </p>
@@ -351,12 +386,16 @@ function DetalheLoja({
   temBase,
   periodoAtual,
   periodoComp,
+  pctFat,
+  fatCarregando,
 }: {
   loja: LojaQuebra;
   compLoja: LojaQuebra | null;
   temBase: boolean;
   periodoAtual: string;
   periodoComp: string;
+  pctFat: string;
+  fatCarregando: boolean;
 }) {
   const mapa = new Map<string, { a?: OperadorQuebra; c?: OperadorQuebra }>();
   for (const o of loja.operadores) mapa.set(chaveOperador(o), { a: o });
@@ -372,9 +411,9 @@ function DetalheLoja({
       <div>
         <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ragga-blue/70">Resumo da loja</p>
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-6">
-          <Item rotulo="Faturamento" valor={moeda.format(loja.faturamento)} />
+          <Item rotulo="Faturamento" valor={fatCarregando || loja.faturamento <= 0 ? "—" : moeda.format(loja.faturamento)} />
           <Item rotulo="Quebra" valor={moeda.format(loja.valor)} />
-          <Item rotulo="% do faturamento" valor={`${pct.format(loja.percentual)}%`} />
+          <Item rotulo="% do faturamento" valor={pctFat} />
           <Item rotulo="Registros" valor={String(loja.quantidade)} />
           <Item rotulo="Comparado" valor={temBase && compLoja ? `${moeda.format(compLoja.valor)} (${pct.format(compLoja.percentual)}%)` : "Sem dados"} />
           <Item rotulo="Período comparado" valor={periodoComp} />

@@ -1,8 +1,9 @@
-import { and, between, desc, eq, gte, lte } from "drizzle-orm";
+import { and, between, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import type { CodigoUnidade } from "@painel/shared";
 import { calcularStatusConferencia, calcularPendente, type StatusConferencia } from "@/lib/rules/conferenciaStatus";
 import { dataDMenos1, dataDMenos2, semanaRealDoPeriodo } from "@/lib/rules/datas";
 import { getDb } from "@/lib/db/client";
+import { contarSemMaquininha } from "@/lib/services/pdvEscopo";
 import { unidades, fechamentoCaixa, pdvMaquininha, troco, conferencia, quebraCaixa, fontesPorPeriodo } from "@/lib/db/schema";
 
 /** Arredonda para 2 casas — evita ruído de ponto flutuante ao somar `numeric` do Postgres (já vem como string). */
@@ -124,6 +125,8 @@ export interface ControlesCaixaData {
     totalMaquininhaRede: number | null;
     diferencaRede: number | null;
     linhas: PdvMaquininhaLinha[];
+    /** Linhas (loja+dia+forma) com Maquininha = 0 e PDV > 0 — candidatas a "célula em branco na origem lida como 0" (só informativo). */
+    semMaquininha?: { linhas: number; pdv: number };
   };
   troco: {
     disponivel: boolean;
@@ -719,12 +722,17 @@ export async function buscarQuebraCaixaDoIntervalo(
  * `buscarControlesCaixa` (soma por loja, `diferenca = maquininha - pdv`),
  * só troca `eq(pdvMaquininha.data, d2)` pelo intervalo [inicio, fim]
  * escolhido pelo usuário. A consulta padrão (D-2) continua inalterada.
+ *
+ * `formas` (opcional): restringe às formas de pagamento informadas (a aba PDV × Maquininha usa só as 4 da extração do
+ * Power BI). Sem `formas` o comportamento é o de sempre (todas as formas). As datas chegam como o chamador as define:
+ * esta função não aplica deslocamento nenhum.
  */
 export async function buscarPdvMaquininhaIntervalo(
   db: ReturnType<typeof getDb>,
   inicio: Date,
   fim: Date,
-  unidadeFiltro?: CodigoUnidade
+  unidadeFiltro?: CodigoUnidade,
+  formas?: readonly string[]
 ): Promise<ControlesCaixaData["pdvMaquininha"]> {
   const vazio: ControlesCaixaData["pdvMaquininha"] = { disponivel: false, totalPdvRede: null, totalMaquininhaRede: null, diferencaRede: null, linhas: [] };
 
@@ -739,7 +747,13 @@ export async function buscarPdvMaquininhaIntervalo(
     .select({ codigo: unidades.codigo, valorPdv: pdvMaquininha.valorPdv, valorMaquininha: pdvMaquininha.valorMaquininha })
     .from(pdvMaquininha)
     .innerJoin(unidades, eq(pdvMaquininha.unidadeId, unidades.id))
-    .where(unidadeId ? and(between(pdvMaquininha.data, inicio, fim), eq(pdvMaquininha.unidadeId, unidadeId)) : between(pdvMaquininha.data, inicio, fim));
+    .where(
+      and(
+        between(pdvMaquininha.data, inicio, fim),
+        unidadeId ? eq(pdvMaquininha.unidadeId, unidadeId) : undefined,
+        formas && formas.length > 0 ? inArray(pdvMaquininha.formaPagamento, [...formas]) : undefined
+      )
+    );
 
   const pdvPorLoja = new Map<string, { pdv: number; maq: number }>();
   for (const r of pdvRows) {
@@ -763,6 +777,7 @@ export async function buscarPdvMaquininhaIntervalo(
     totalMaquininhaRede: pdvLinhas.length > 0 ? totalMaquininhaRede : null,
     diferencaRede: pdvLinhas.length > 0 ? arred(totalMaquininhaRede - totalPdvRede) : null,
     linhas: pdvLinhas,
+    semMaquininha: contarSemMaquininha(pdvRows),
   };
 }
 

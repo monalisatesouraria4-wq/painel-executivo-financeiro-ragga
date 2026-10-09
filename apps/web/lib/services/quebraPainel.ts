@@ -237,3 +237,63 @@ export interface QuebraComparativoDados {
   /** Primeira data com registro na base de Quebra (AAAA-MM-DD) — para avisar quando o período comparado é parcial. */
   quebraDesde: string | null;
 }
+
+export type EstadoPercentualFaturamento = "carregando" | "indisponivel" | "ok";
+
+/**
+ * % da quebra sobre o faturamento (quebra ÷ faturamento do MESMO recorte × 100). Faturamento ainda carregando →
+ * "carregando" (sem valor, sem erro); ausente/zero/inválido → "indisponivel" (nunca 0% inventado); senão "ok".
+ */
+export function percentualSobreFaturamento(valorQuebra: number, faturamento: number | null | undefined, carregando: boolean): { estado: EstadoPercentualFaturamento; percentual: number | null } {
+  if (carregando) return { estado: "carregando", percentual: null };
+  if (faturamento === null || faturamento === undefined || !Number.isFinite(faturamento) || faturamento <= 0) return { estado: "indisponivel", percentual: null };
+  return { estado: "ok", percentual: (valorQuebra / faturamento) * 100 };
+}
+
+export interface FatiaLojaQuebra {
+  unidade: string;
+  valor: number;
+  /** valor ÷ total da quebra do mesmo recorte × 100. */
+  participacao: number;
+}
+
+/** Rosca por loja: só lojas com quebra > 0, do maior valor para o menor; participação sobre o total do MESMO recorte. */
+export function fatiasQuebraPorLoja(porLoja: LojaQuebra[], total: number): FatiaLojaQuebra[] {
+  if (!(total > 0)) return [];
+  return porLoja
+    .filter((l) => l.valor > 0)
+    .sort((a, b) => b.valor - a.valor || a.unidade.localeCompare(b.unidade))
+    .map((l) => ({ unidade: l.unidade, valor: l.valor, participacao: (l.valor / total) * 100 }));
+}
+
+export interface BarraMotivoQuebra {
+  /** Texto do motivo exatamente como está na base (vazio = "(motivo em branco)" na tela). */
+  motivo: string;
+  valor: number;
+  /** valor ÷ total da quebra do mesmo recorte × 100. */
+  percentual: number;
+  /** atual − comparado (R$); `null` sem base de comparação. Motivo ausente no comparado = 0 (base válida). */
+  variacaoValor: number | null;
+  /** (atual − comparado) ÷ comparado × 100; `null` sem base ou comparado = 0 (variação indefinida). */
+  variacaoPercentual: number | null;
+}
+
+/** Barras por motivo: motivos reais da base com valor > 0, do maior para o menor; variação só com base de comparação válida. */
+export function barrasQuebraPorMotivo(atual: MotivoQuebra[], comparado: MotivoQuebra[] | null, baseValida: boolean, total: number): BarraMotivoQuebra[] {
+  if (!(total > 0)) return [];
+  const comp = new Map((comparado ?? []).map((m) => [m.motivo, m.valor]));
+  return atual
+    .filter((m) => m.valor > 0)
+    .sort((a, b) => b.valor - a.valor || a.motivo.localeCompare(b.motivo))
+    .map((m) => {
+      const temComparacao = baseValida && comparado !== null;
+      const vc = comp.get(m.motivo) ?? 0;
+      return {
+        motivo: m.motivo,
+        valor: m.valor,
+        percentual: (m.valor / total) * 100,
+        variacaoValor: temComparacao ? arred(m.valor - vc) : null,
+        variacaoPercentual: temComparacao && vc > 0 ? ((m.valor - vc) / vc) * 100 : null,
+      };
+    });
+}

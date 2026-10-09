@@ -1,4 +1,4 @@
-import { between, sql } from "drizzle-orm";
+import { between, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
   faturamento,
@@ -10,12 +10,15 @@ import {
   quebraCaixa,
   pdvMaquininha,
   formasPagamento,
+  conferencia,
+  unidades,
 } from "@/lib/db/schema";
-import { buscarTrocoDaSemana, buscarConferenciaDoPeriodo } from "@/lib/services/controlesCaixa";
+import { buscarTrocoDaSemana } from "@/lib/services/controlesCaixa";
 import {
   normalizarPeriodo,
   janelaD1,
   janelaD2,
+  resumirConferenciaSemana,
   type FechamentoSemanalData,
   type SemanalReportData,
 } from "./fechamentoSemanal";
@@ -26,9 +29,9 @@ import { agregarEmBuckets } from "@/lib/rules/formasPagamento";
  * exatamente as janelas já documentadas em `fechamentoSemanal.ts`
  * (D-1 para Faturamento/Formas de Pagamento/Brindes/Cancelamentos/Compra
  * Direta, D-2 para PDV×Maquininha, data literal para Fechamento/Quebra,
- * semana real para Troco via `buscarTrocoDaSemana`, ciclo 16→15 para
- * Conferência via `buscarConferenciaDoPeriodo` — ambas já validadas, não
- * duplicadas). Formas de Pagamento: mesma janela D-1 do Faturamento,
+ * semana real para Troco via `buscarTrocoDaSemana`; Conferência = registros
+ * loja × dia de `iniBase..fimBase` agregados por `resumirConferenciaGerencial`,
+ * a mesma regra da aba Conferência). Formas de Pagamento: mesma janela D-1 do Faturamento,
  * classificada nas 8 categorias via `agregarEmBuckets`.
  */
 
@@ -83,7 +86,7 @@ export async function buscarFechamentoSemanal(iniISO: string, fimISO: string): P
     quebraRows,
     pdvRows,
     trocoData,
-    conferenciaData,
+    conferenciaRows,
     formasRows,
   ] = await Promise.all([
     somaValor(db, faturamento, d1.inicio, d1.fim),
@@ -104,7 +107,17 @@ export async function buscarFechamentoSemanal(iniISO: string, fimISO: string): P
       .from(pdvMaquininha)
       .where(between(pdvMaquininha.data, d2.inicio, d2.fim)),
     buscarTrocoDaSemana(db, iniBase),
-    buscarConferenciaDoPeriodo(db, iniBase),
+    db
+      .select({
+        codigo: unidades.codigo,
+        data: conferencia.data,
+        qtdCadastrados: conferencia.qtdCadastrados,
+        qtdConferidos: conferencia.qtdConferidos,
+        emAtraso: conferencia.emAtraso,
+      })
+      .from(conferencia)
+      .innerJoin(unidades, eq(conferencia.unidadeId, unidades.id))
+      .where(between(conferencia.data, iniBase, fimBase)),
     db
       .select({ forma: formasPagamento.forma, valor: formasPagamento.valor })
       .from(formasPagamento)
@@ -114,6 +127,8 @@ export async function buscarFechamentoSemanal(iniISO: string, fimISO: string): P
   const pdvTotalPdv = pdvRows.reduce((s, r) => s + Number(r.valorPdv), 0);
   const pdvTotalMaq = pdvRows.reduce((s, r) => s + Number(r.valorMaquininha), 0);
   const formaBuckets = agregarEmBuckets(formasRows.map((r) => ({ forma: r.forma, valor: Number(r.valor) })));
+
+  const conf = resumirConferenciaSemana(conferenciaRows);
 
   const fechAbertos = fechRows.filter((r) => r.situacao === "Aberto").length;
   const fechFechados = fechRows.filter((r) => r.situacao === "Fechado").length;
@@ -146,11 +161,7 @@ export async function buscarFechamentoSemanal(iniISO: string, fimISO: string): P
     trocoQtdConferido: trocoData.linhas.flatMap((l) => l.caixas).filter((c) => c.status === "Conferido").length,
     trocoQtdDivergencia: trocoData.divergencias ?? 0,
     trocoQtdSemConferencia: 0,
-    confCadastro: conferenciaData.totalCaixasRede ?? 0,
-    confQtdConferidos: conferenciaData.totalConferidosRede ?? 0,
-    confQtdAtraso: conferenciaData.totalEmAtraso ?? 0,
-    confQtdPendentes: conferenciaData.totalPendentesRede ?? 0,
-    pctConferido: conferenciaData.percentualConferidoRede,
+    ...conf,
   };
 
   const disponivel =

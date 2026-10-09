@@ -5,12 +5,9 @@ import type { CodigoUnidade } from "@painel/shared";
 import type { ControlesCaixaData } from "@/lib/services/controlesCaixa";
 import type { AberturaFechamentoData } from "@/lib/services/aberturaFechamento";
 import { FiltroDataReferencia, paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
-import { dataDMenos2 } from "@/lib/rules/datas";
 import { buscarControlesCaixaPorData } from "@/lib/actions/buscarControlesCaixaPorData";
 import { buscarAberturaFechamentoPorData } from "@/lib/actions/buscarAberturaFechamentoPorData";
 import { buscarAberturaFechamentoIntervalo } from "@/lib/actions/buscarAberturaFechamentoIntervalo";
-import { buscarPdvMaquininhaIntervalo } from "@/lib/actions/buscarPdvMaquininhaIntervalo";
-import { buscarTrocoIntervalo } from "@/lib/actions/buscarTrocoIntervalo";
 import { buscarConferenciaIntervalo } from "@/lib/actions/buscarConferenciaIntervalo";
 import { buscarQuebraCaixaIntervalo } from "@/lib/actions/buscarQuebraCaixaIntervalo";
 import { FechamentoTab } from "./FechamentoTab";
@@ -28,7 +25,7 @@ import { QuebraCaixaTab } from "./QuebraCaixaTab";
  * - "Loja" é sempre aplicado, nas duas modalidades abaixo.
  * - Por padrão (sem período ativo), cada sub-aba continua usando
  *   EXATAMENTE sua janela já validada sobre a "Data de referência"
- *   (Fechamento = data exata; PDV × Maquininha = D-2; Troco = semana
+ *   (Fechamento = data exata; PDV × Maquininha = período literal, sem D-2; Troco = semana
  *   real; Conferência/Quebra = ciclo 16→15) — nada mudou aqui, e o
  *   filtro de loja é aplicado client-side, filtrando as linhas/detalhes
  *   já retornados (nenhuma consulta nova, nenhum total de rede alterado).
@@ -62,13 +59,12 @@ export function ControlesCaixaTabs({
   const [subAtiva, setSubAtiva] = useState<SubAba>("fechamento");
   const [dados, setDados] = useState(dadosIniciais);
   const [dadosFechamento, setDadosFechamento] = useState(dadosFechamentoIniciais);
+  const dataInicialInput = useMemo(() => paraInputDate(dataInicial), [dataInicial]);
   const [dataSelecionada, setDataSelecionada] = useState(() => paraInputDate(dataInicial));
   const [unidade, setUnidade] = useState<string>("TODAS");
   const [periodo, setPeriodo] = useState<{ inicio: string; fim: string } | null>(null);
   const [dadosPeriodo, setDadosPeriodo] = useState<{
     fechamento: AberturaFechamentoData;
-    pdvMaquininha: ControlesCaixaData["pdvMaquininha"];
-    troco: ControlesCaixaData["troco"];
     conferencia: ControlesCaixaData["conferencia"];
     quebraCaixa: ControlesCaixaData["quebraCaixa"];
   } | null>(null);
@@ -96,14 +92,12 @@ export function ControlesCaixaTabs({
       const dtInicio = dataDoInput(inicio);
       const dtFim = dataDoInput(fim);
       const unidadeFiltroAtual = novaUnidade !== "TODAS" ? (novaUnidade as CodigoUnidade) : undefined;
-      const [fechamentoR, pdvR, trocoR, conferenciaR, quebraR] = await Promise.all([
+      const [fechamentoR, conferenciaR, quebraR] = await Promise.all([
         buscarAberturaFechamentoIntervalo(dtInicio, dtFim, unidadeFiltroAtual),
-        buscarPdvMaquininhaIntervalo(dataDMenos2(dtInicio), dataDMenos2(dtFim), unidadeFiltroAtual),
-        buscarTrocoIntervalo(dtInicio, dtFim, unidadeFiltroAtual),
         buscarConferenciaIntervalo(dtInicio, dtFim, unidadeFiltroAtual),
         buscarQuebraCaixaIntervalo(dtInicio, dtFim, unidadeFiltroAtual),
       ]);
-      setDadosPeriodo({ fechamento: fechamentoR, pdvMaquininha: pdvR, troco: trocoR, conferencia: conferenciaR, quebraCaixa: quebraR });
+      setDadosPeriodo({ fechamento: fechamentoR, conferencia: conferenciaR, quebraCaixa: quebraR });
     });
   }
 
@@ -128,8 +122,6 @@ export function ControlesCaixaTabs({
   );
 
   const fechamentoExibido = dadosPeriodo?.fechamento ?? dadosFechamento;
-  const pdvExibido = dadosPeriodo?.pdvMaquininha ?? dados.pdvMaquininha;
-  const trocoExibido = dadosPeriodo?.troco ?? dados.troco;
   const conferenciaExibido = dadosPeriodo?.conferencia ?? dados.conferencia;
   const quebraExibido = dadosPeriodo?.quebraCaixa ?? dados.quebraCaixa;
 
@@ -191,8 +183,8 @@ export function ControlesCaixaTabs({
 
       <p className="px-6 pt-2 text-xs text-foreground/50">
         {periodo
-          ? "Mostrando o período personalizado selecionado — cada sub-aba aplica sua própria regra de janela (D-2/semana real/ciclo/data exata) sobre as duas pontas do intervalo."
-          : "Mostrando a Data de referência — cada sub-aba aplica sua própria janela padrão (Fechamento = data exata; PDV × Maquininha = D-2; Troco = semana real; Conferência/Quebra = ciclo 16→15)."}
+          ? "Mostrando o período personalizado selecionado — cada sub-aba aplica sua própria regra de janela (semana real/ciclo/data exata; PDV × Maquininha usa o período literal, sem D-2) sobre as duas pontas do intervalo."
+          : "Mostrando a Data de referência — cada sub-aba aplica sua própria janela padrão (Fechamento = data exata; PDV × Maquininha = período literal, sem D-2; Troco = semana real; Conferência/Quebra = ciclo 16→15)."}
       </p>
 
       <div className="flex flex-wrap gap-1 border-b border-ragga-blue/10 px-6 pt-2">
@@ -214,18 +206,18 @@ export function ControlesCaixaTabs({
 
       <div className="px-6 py-6">
         {subAtiva === "fechamento" && (
-          <FechamentoTab dados={fechamentoExibido} unidade={periodo ? undefined : unidadeFiltro} janela={janelaSelecionada} lojaFiltro={unidadeFiltro} />
-        )}
-        {subAtiva === "pdv" && (
-          <PdvMaquininhaTab
-            dados={pdvExibido}
-            dataReferencia={dataDoInput(dataSelecionada)}
+          <FechamentoTab
+            dados={fechamentoExibido}
             unidade={periodo ? undefined : unidadeFiltro}
             janela={janelaSelecionada}
             lojaFiltro={unidadeFiltro}
+            aoSelecionarPeriodo={(inicio, fim) => aplicarPeriodo(inicio, fim, unidade)}
           />
         )}
-        {subAtiva === "troco" && <TrocoTab dados={trocoExibido} unidade={periodo ? undefined : unidadeFiltro} janela={janelaSelecionada} lojaFiltro={unidadeFiltro} />}
+        {subAtiva === "pdv" && (
+          <PdvMaquininhaTab janela={janelaSelecionada} lojaFiltro={unidadeFiltro} />
+        )}
+        {subAtiva === "troco" && <TrocoTab janela={janelaSelecionada} lojaFiltro={unidadeFiltro} filtroDeDataAtivo={periodo !== null || dataSelecionada !== dataInicialInput} />}
         {subAtiva === "conferencia" && <ConferenciaTab dados={conferenciaExibido} unidade={periodo ? undefined : unidadeFiltro} />}
         {subAtiva === "quebra" && <QuebraCaixaTab dados={quebraExibido} unidade={periodo ? undefined : unidadeFiltro} lojaFiltro={unidadeFiltro} />}
       </div>

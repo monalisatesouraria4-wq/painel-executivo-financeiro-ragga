@@ -3,7 +3,10 @@ function normalizar(valor: unknown): string {
     .trim()
     .toUpperCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
+    .replace(/[̀-ͯ]/g, "")
+    // Espaços repetidos (inclusive NBSP/tab) valem como um só; depois do trim, nada sobra nas pontas.
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

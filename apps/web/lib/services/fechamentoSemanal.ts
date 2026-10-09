@@ -1,4 +1,5 @@
 import { dataDMenos1, dataDMenos2 } from "@/lib/rules/datas";
+import { resumirConferenciaGerencial } from "@/lib/services/conferenciaGerencial";
 import type { FormaPagamentoBuckets } from "./fechamentoWhatsapp";
 
 /**
@@ -14,10 +15,10 @@ import type { FormaPagamentoBuckets } from "./fechamentoWhatsapp";
  * - D-2 (`janelaD2`, reaproveita `dataDMenos2`): PDV × Maquininha.
  * - Data literal (sem deslocamento): Fechamento dos caixas, Quebra de
  *   Caixa, Troco — filtram exatamente `iniBase..fimBase`.
- * - Conferência: itera dia a dia dentro de `iniBase..fimBase` (data
- *   literal), mas o ATRASO é calculado contra a data de referência
- *   GLOBAL do sistema, nunca contra as pontas do período (confirmado no
- *   legado, `isAtraso(filial, d, refDateGlobal)`).
+ * - Conferência: registros loja × dia de `iniBase..fimBase` (data literal,
+ * semana selecionada — não o ciclo 16→15), agregados por
+ * `resumirConferenciaGerencial` (previstas = conferidas + atraso; X = marcação
+ * oficial de atraso, contada pelas caixas cadastradas do dia).
  *
  * Tela ao vivo mostra só 5 KPIs (Faturamento/Brindes/Cancelamentos
  * somados/Compra Direta/Quebra) — PDV×Maquininha, Troco, Conferência e
@@ -98,11 +99,15 @@ export interface SemanalReportData {
   trocoQtdConferido: number;
   trocoQtdDivergencia: number;
   trocoQtdSemConferencia: number;
-  confCadastro: number;
-  confQtdConferidos: number;
-  confQtdAtraso: number;
-  confQtdPendentes: number;
-  pctConferido: number | null;
+  /** Conferência da SEMANA selecionada (`iniBase..fimBase`), mesma regra da aba Conferência (MAPOLI sáb/dom fora). */
+  /** conferidas + em atraso. */
+  confPrevistas: number;
+  /** Σ caixas conferidas (números da matriz; sem limite ao cadastro). */
+  confConferidas: number;
+  /** Σ cadastradas dos registros com X (atraso oficial da planilha). */
+  confAtrasadas: number;
+  /** conferidas ÷ previstas × 100 (nunca média de percentuais); `null` sem dados. */
+  confPercentual: number | null;
 }
 
 export interface FechamentoSemanalData {
@@ -119,3 +124,30 @@ export interface FechamentoSemanalData {
  * `getDb()`, senão o bundler inclui o driver Postgres no bundle do
  * navegador quando um Client Component importa só os tipos daqui).
  */
+
+/** Registro loja × dia de conferência lido da base (já filtrado em `iniBase..fimBase`). */
+export interface RegistroConferenciaSemana {
+  codigo: string;
+  data: Date;
+  qtdCadastrados: number;
+  qtdConferidos: number | null;
+  emAtraso: boolean;
+}
+
+export type ConferenciaSemanal = Pick<
+  SemanalReportData,
+  "confPrevistas" | "confConferidas" | "confAtrasadas" | "confPercentual"
+>;
+
+/** Mesma regra da aba Conferência (`resumirConferenciaGerencial`): conferidas ÷ (conferidas + atraso), X × cadastradas = atraso, MAPOLI sáb/dom fora. */
+export function resumirConferenciaSemana(registros: RegistroConferenciaSemana[]): ConferenciaSemanal {
+  const porLoja = new Map<string, RegistroConferenciaSemana[]>();
+  for (const r of registros) porLoja.set(r.codigo, [...(porLoja.get(r.codigo) ?? []), r]);
+  const rede = resumirConferenciaGerencial([...porLoja.entries()].map(([unidade, dias]) => ({ unidade, dias }))).rede;
+  return {
+    confPrevistas: rede.previstas,
+    confConferidas: rede.conferidas,
+    confAtrasadas: rede.atrasadas,
+    confPercentual: rede.percentual,
+  };
+}
