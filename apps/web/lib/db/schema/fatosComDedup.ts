@@ -1,4 +1,4 @@
-import { pgTable, uuid, date, text, numeric, integer, boolean, timestamp, unique, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, date, text, numeric, integer, boolean, timestamp, unique, check, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { unidades } from "./dimensoes";
 import { importacoes } from "./importacao";
@@ -61,6 +61,54 @@ export const cancelamentoSalao = pgTable(
     valor: numeric("valor", { precision: 14, scale: 2 }).notNull(),
   },
   (table) => [unique("cancelamento_salao_chave").on(table.unidadeId, table.data, table.motivo)]
+);
+
+/**
+ * Detalhe INDIVIDUAL dos estornos do Cancelamento Salão (alerta "Cancelamentos após 00h30"). Tabela ADICIONAL — não
+ * substitui nem altera `cancelamento_salao` (agregado). Sem identificador único na origem: a chave é composta por todos
+ * os campos do estorno + `ocorrencia` (ordem entre linhas idênticas no arquivo), então reimportar não duplica e
+ * ocorrências legítimas repetidas são preservadas. `estorno_em` é o horário como digitado (sem fuso).
+ */
+export const cancelamentoSalaoDetalhe = pgTable(
+  "cancelamento_salao_detalhe",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    unidadeId: uuid("unidade_id")
+      .notNull()
+      .references(() => unidades.id),
+    estornoEm: timestamp("estorno_em", { mode: "string" }).notNull(),
+    dataCalendario: date("data_calendario", { mode: "string" }).notNull(),
+    dataOperacional: date("data_operacional", { mode: "string" }).notNull(),
+    minutoDoDia: integer("minuto_do_dia").notNull(),
+    madrugada: boolean("madrugada").notNull(),
+    comanda: text("comanda").notNull().default(""),
+    produto: text("produto").notNull().default(""),
+    quantidade: numeric("quantidade", { precision: 12, scale: 2 }).notNull().default("0"),
+    valor: numeric("valor", { precision: 14, scale: 2 }).notNull(),
+    motivo: text("motivo").notNull().default(""),
+    justificativa: text("justificativa").notNull().default(""),
+    atendente: text("atendente").notNull().default(""),
+    autorizador: text("autorizador").notNull().default(""),
+    ocorrencia: integer("ocorrencia").notNull(),
+    criadoEm: timestamp("criado_em", { withTimezone: true }).notNull().defaultNow(),
+    atualizadoEm: timestamp("atualizado_em", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("cancelamento_salao_detalhe_chave").on(
+      table.unidadeId,
+      table.estornoEm,
+      table.comanda,
+      table.produto,
+      table.quantidade,
+      table.valor,
+      table.motivo,
+      table.atendente,
+      table.autorizador,
+      table.ocorrencia
+    ),
+    // Índice PARCIAL do alerta (só estornos da janela 00h31–05h59): igual ao criado no banco pela migration 0003.
+    index("cancelamento_salao_detalhe_madrugada_idx").on(table.dataOperacional).where(sql`${table.madrugada}`),
+  ]
 );
 
 /** Chave: filial + data + motivo. */

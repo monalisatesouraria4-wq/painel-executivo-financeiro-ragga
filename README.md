@@ -88,28 +88,49 @@ npm run test:e2e
 
 ### Banco de dados (Supabase)
 
-Schema definido em `apps/web/lib/db/schema/*.ts`, com migration gerada em
-`supabase/migrations/` (`0000_schema_inicial.sql` + `0001_rls.sql`) e seed
-em `supabase/seed/`. **Nada disso foi aplicado em um banco real ainda** —
-nenhum projeto Supabase está conectado.
+Schema definido em `apps/web/lib/db/schema/*.ts`. Os arquivos SQL ficam em
+`supabase/migrations/` (pasta de saída do Drizzle Kit — não é o mecanismo de
+migrations da CLI do Supabase; não há `config.toml` nem o schema
+`supabase_migrations`), com o seed em `supabase/seed/`:
 
-Quando houver um projeto Supabase para conectar:
+| Migration | Conteúdo |
+|---|---|
+| `0000_schema_inicial.sql` | tabelas de fato, dimensão, controle e gestão |
+| `0001_rls.sql` | Row Level Security (escrita à mão) |
+| `0002_lonely_zaran.sql` | `tratativas.data_ocorrencia` |
+| `0003_cancelamento_salao_detalhe.sql` | detalhe individual dos estornos do Cancelamento Salão (índice parcial, RLS e policy; idempotente) |
 
-1. Copiar `apps/web/.env.example` para `apps/web/.env.local` e preencher
-   com as credenciais do projeto Supabase (`DATABASE_URL`, etc.).
-2. Aplicar as migrations em `supabase/migrations/` (via `npm run db:migrate`
-   ou pela CLI/dashboard do Supabase).
-3. Rodar os scripts de `supabase/seed/` (17 unidades + parâmetros de
-   semáforo aprovados).
-4. Alterações futuras ao schema: editar `apps/web/lib/db/schema/*.ts` e
-   rodar `npm run db:generate` para gerar a próxima migration.
+**Como as migrations são aplicadas hoje: manualmente, sem rastreamento no banco.**
+O banco compartilhado (Supabase) recebeu cada SQL por fora do `drizzle-kit
+migrate`; a tabela de controle `drizzle.__drizzle_migrations` existe, mas está
+**vazia** — nenhuma migration (0000 a 0003) está registrada nela. O deploy na
+Vercel roda apenas `next build`: **nenhum passo de migration é executado no
+deploy**. Por isso:
+
+- **Não rode `npm run db:migrate` contra o banco compartilhado** sem antes
+  registrar a referência (baseline) em `drizzle.__drizzle_migrations`: sem ela,
+  o Drizzle tentaria reaplicar a 0000 (as tabelas já existem) e falharia.
+- Os arquivos `meta/_journal.json` e `meta/NNNN_snapshot.json` servem ao
+  `db:generate` (diff do schema); eles refletem o schema atual (até a 0003) e
+  não o estado do banco.
+
+Para uma nova migration: editar `apps/web/lib/db/schema/*.ts`, rodar
+`npm run db:generate` (não conecta ao banco), revisar o SQL gerado, aplicá-lo
+manualmente no banco (ou nas rotinas aprovadas) e fazer o commit do `.sql`, do
+`_journal.json` e do novo snapshot. Para um banco novo: copiar
+`apps/web/.env.example` para `apps/web/.env.local`, preencher `DATABASE_URL`,
+aplicar os SQL de `supabase/migrations/` em ordem e rodar os scripts de
+`supabase/seed/` (17 unidades + parâmetros de semáforo aprovados).
 
 ## Estado do projeto / próximas etapas
 
 1. ✅ **Etapa 1 — Fundação.**
 2. ✅ **Etapa 2 — Schema do banco** (tabelas de fato, dimensão,
    `fontes_por_periodo`, perfis/usuários, RLS, seed). Schema definido e
-   migration gerada, **ainda não aplicada em nenhum banco real** (este momento).
+   migrations geradas; **aplicadas manualmente ao banco compartilhado
+   (Supabase)**, inclusive a 0003 (`cancelamento_salao_detalhe`). As migrations
+   **não estão registradas** em `drizzle.__drizzle_migrations`, que permanece
+   vazia (ver "Banco de dados (Supabase)").
 3. ⏳ Etapa 3 — Motor de importação (parsers, `resolverAba`, upsert/delete+insert).
 4. ⏳ Etapa 4 em diante — telas (Visão Geral, Comparativo, Indicadores,
    Controles de Caixa, Análise Gerencial, Plano de Ação, Fechamentos),

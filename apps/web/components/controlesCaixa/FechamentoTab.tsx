@@ -267,7 +267,7 @@ export function FechamentoTab({
           aviso={resumo.pendentesVencidas > 0}
         />
         <CardIndicador
-          titulo="Diferença dos fechamentos"
+          titulo="Diferença do operador"
           valor={moeda(resumo.difFechamento)}
           detalhe={`Soma da Dif. fechamento (operador) de ${resumo.registros - resumo.registrosSemDifFechamento} registros${resumo.registrosSemDifFechamento > 0 ? `; ${resumo.registrosSemDifFechamento} sem valor na base não entram` : ""}`}
           disponivel={disponivel}
@@ -289,7 +289,7 @@ export function FechamentoTab({
 
       <PainelLojasComparativo<CaixaAberturaFechamentoLinha[]>
         titulo="🏪 Fechamento de caixa por loja"
-        rotuloValor="Dif. total"
+        rotuloValor="Dif. final"
         periodoAtualTxt={periodoAtualTxt}
         compInicio={comp.compInicio}
         compFim={comp.compFim}
@@ -311,7 +311,7 @@ export function FechamentoTab({
           { titulo: "Pendentes concil.", celula: (l) => l.detalhe.filter((x) => statusConciliacao(x) === "fechado-pendente").length },
           { titulo: "Em aberto", celula: (l) => l.detalhe.filter((x) => statusConciliacao(x) === "aberto").length },
         ]}
-        notaStatus="Dif. total = soma do campo DIF. TOTAL da base (com sinal: negativo = falta; registros sem DIF. TOTAL não entram). Variação = atual − comparado: uma variação positiva significa diferença menos negativa (ex.: −R$ 1.351,41 contra −R$ 3.456,47 = +R$ 2.105,06), mas ainda há diferença a acompanhar. Status = distância até zero contra o período comparado (menor = 🟢 melhorou · maior = 🔴 piorou). Não há meta/limite de Fechamento cadastrado. O filtro de Status acima vale para esta tabela."
+        notaStatus="Dif. final = soma do campo DIF. TOTAL (dif_total) da base, a diferença final após a conciliação; não é a soma do cartão “Diferença do operador”, que usa a Dif. fechamento (com sinal: negativo = falta; registros sem DIF. TOTAL não entram). Variação = atual − comparado: uma variação positiva significa diferença menos negativa (ex.: −R$ 1.351,41 contra −R$ 3.456,47 = +R$ 2.105,06), mas ainda há diferença a acompanhar. Status = distância até zero contra o período comparado (menor = 🟢 melhorou · maior = 🔴 piorou). Não há meta/limite de Fechamento cadastrado. O filtro de Status acima vale para esta tabela."
         renderDetalhe={(loja, c, temBase, periodoComp) => <DetalheFechamentoLoja loja={loja} comparada={c} temBase={temBase} periodoComp={periodoComp} hoje={hoje} />}
       />
 
@@ -358,7 +358,7 @@ export function FechamentoTab({
               <th className="px-4 py-2">Situação</th>
               <th className="px-4 py-2 text-right">Dif. Fechamento</th>
               <th className="px-4 py-2 text-right">Dif. Conciliação</th>
-              <th className="px-4 py-2 text-right">Dif. Total</th>
+              <th className="px-4 py-2 text-right">Dif. final</th>
             </tr>
           </thead>
           <tbody>
@@ -397,7 +397,7 @@ export function FechamentoTab({
 
 /**
  * Expansão da loja em 3 níveis: (1) rede = painel acima; (2) resumo compacto da loja; (3) caixas individuais.
- * Σ da coluna Dif. total = diferença da loja (mesma fonte do painel).
+ * Σ da coluna Dif. final (dif_total) = diferença da loja (mesma fonte do painel).
  */
 function DetalheFechamentoLoja({
   loja,
@@ -461,7 +461,7 @@ function DetalheFechamentoLoja({
               <th className="px-2 py-1">Situação da conciliação</th>
               <th className="px-2 py-1 text-right">Dif. Fechamento</th>
               <th className="px-2 py-1 text-right">Dif. Conciliação</th>
-              <th className="px-2 py-1 text-right">Dif. Total</th>
+              <th className="px-2 py-1 text-right">Dif. final</th>
             </tr>
           </thead>
           <tbody>
@@ -491,7 +491,7 @@ function DetalheFechamentoLoja({
             })}
             <tr className="border-t border-ragga-blue/15 font-semibold text-ragga-blue-dark">
               <td className="py-1.5 pr-3" colSpan={7}>
-                Total da loja (Dif. total)
+                Total da loja (Dif. final)
               </td>
               <td className="px-2 text-right">{moeda(total)}</td>
             </tr>

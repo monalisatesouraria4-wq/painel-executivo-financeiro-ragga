@@ -6,6 +6,8 @@ import { localizarColuna, localizarColunaExata } from "@/lib/import/localizarCol
 import { resolverAbaConferenciaPorData, type AbaConferenciaBruta } from "@/lib/import/resolverAbaConferencia";
 import { resolverAbaQuebraPorData, type AbaQuebraBruta } from "@/lib/import/resolverAbaQuebra";
 import { persistirBaseNoBanco } from "@/lib/actions/persistirBase";
+import { persistirDetalhesCancelamentoSalao } from "@/lib/actions/persistirCancelamentoSalaoDetalhes";
+import { parseCancelamentoSalaoDetalhe, type ResultadoParseDetalhe } from "@/lib/import/parsers/cancelamentoSalaoDetalhe";
 import { parseFaturamento } from "@/lib/import/parsers/faturamento";
 import { parseFechamentoCaixa } from "@/lib/import/parsers/fechamentoCaixa";
 import { parsePdvMaquininha } from "@/lib/import/parsers/pdvMaquininha";
@@ -255,6 +257,8 @@ export type ResultadoImportacao =
       periodoArquivoFim: Date;
       /** Linhas rejeitadas pelo parser (unidade não reconhecida, data/valor inválido etc.). */
       rejeitados: number;
+      /** Só Cancelamento Salão: detalhe individual dos estornos (tabela adicional; o agregado acima não muda). */
+      detalhes?: { inseridos: number; atualizados: number; rejeitados: number; erro?: string };
     }
   | { status: "erro"; mensagem: string };
 
@@ -308,6 +312,7 @@ export async function processarArquivoBase(
   let parseResult: ResultadoParse;
   let fonteConferencia: import("@/lib/db/persistencia").FonteConferencia | undefined;
   let fonteQuebraCaixa: import("@/lib/db/persistencia").FonteQuebraCaixa | undefined;
+  let detalhesCancelamentoSalao: ResultadoParseDetalhe | undefined;
 
   if (id === "quebraCaixa") {
     const abasBrutas: AbaQuebraBruta[] = Object.entries(planilha.sheets).map(([nomeAba, linhas]) => {
@@ -381,6 +386,7 @@ export async function processarArquivoBase(
     }
 
     parseResult = executarParser(id, cabecalho, linhas);
+    if (id === "cancelamentoSalao") detalhesCancelamentoSalao = parseCancelamentoSalaoDetalhe(cabecalho, linhas);
   }
 
   if (parseResult.registros.length === 0) {
@@ -401,6 +407,24 @@ export async function processarArquivoBase(
     const contagens = await persistirBaseNoBanco(id, parseResult.registros, fonteConferencia, fonteQuebraCaixa);
     if (contagens) {
       const novoEstado = aplicarGravacao(info.tipoBase, parseResult.registros, estadoAnterior);
+      // Cancelamento Salão: além do agregado (já gravado acima, inalterado), grava o detalhe individual dos estornos em
+      // lotes (limite de corpo das Server Actions). Falha aqui NÃO desfaz o agregado — é informada em `detalhes.erro`.
+      let detalhes: Extract<ResultadoImportacao, { status: "sucesso" }>["detalhes"];
+      if (detalhesCancelamentoSalao) {
+        try {
+          let inseridosD = 0;
+          let atualizadosD = 0;
+          const regs = detalhesCancelamentoSalao.registros;
+          for (let i = 0; i < regs.length; i += 800) {
+            const r = await persistirDetalhesCancelamentoSalao(regs.slice(i, i + 800));
+            inseridosD += r?.inseridos ?? 0;
+            atualizadosD += r?.atualizados ?? 0;
+          }
+          detalhes = { inseridos: inseridosD, atualizados: atualizadosD, rejeitados: detalhesCancelamentoSalao.rejeitados.length };
+        } catch (err) {
+          detalhes = { inseridos: 0, atualizados: 0, rejeitados: detalhesCancelamentoSalao.rejeitados.length, erro: err instanceof Error ? err.message : "Erro desconhecido." };
+        }
+      }
       return {
         status: "sucesso",
         mensagem: "Base atualizada com sucesso.",
@@ -412,6 +436,7 @@ export async function processarArquivoBase(
         periodoArquivoInicio,
         periodoArquivoFim,
         rejeitados: parseResult.rejeitados.length,
+        ...(detalhes ? { detalhes } : {}),
       };
     }
   } catch (err) {

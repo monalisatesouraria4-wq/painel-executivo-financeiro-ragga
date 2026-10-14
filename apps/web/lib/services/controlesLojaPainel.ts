@@ -9,7 +9,8 @@ import type { PdvMaquininhaLinha, TrocoCaixaLinha, TrocoLinha } from "@/lib/serv
  * ou de importação foi alterada, e nenhum limite/meta foi criado.
  *
  * O que significa cada coluna (sempre as definições já existentes de cada aba):
- * - Fechamento: valor = Σ `difTotal` (o campo "DIF. TOTAL" da base — a MESMA fonte do card "Diferença nos fechamentos realizados pelo operador"),
+ * - Fechamento: valor = Σ `difTotal` (o campo "DIF. TOTAL" da base — a "Dif. final", após a conciliação; NÃO é a mesma medida do card
+ *   "Diferença do operador", que soma a `difFechamento`; a diferença entre os dois são os ajustes de conciliação dos registros conciliados),
  *   COM sinal. Não existe % sobre faturamento nessa aba → sem coluna de %.
  * - PDV × Maquininha: valor = diferença = Maquininha − PDV (como na tabela atual), COM sinal. Sem % (não há regra
  *   percentual confiável — a coluna antiga foi removida de propósito).
@@ -65,7 +66,7 @@ const redeVazia: MetricaLoja<null> = { unidade: "REDE", valor: 0, percentual: nu
 
 export function agregarFechamento(linhas: CaixaAberturaFechamentoLinha[]): PainelLojas<CaixaAberturaFechamentoLinha[]> {
   const lojas: MetricaLoja<CaixaAberturaFechamentoLinha[]>[] = [...porLojaOrdenada(linhas)].map(([unidade, ls]) => {
-    const valor = arred(ls.reduce((s, l) => s + (l.difTotal ?? 0), 0)); // DIF. TOTAL — igual ao card
+    const valor = arred(ls.reduce((s, l) => s + (l.difTotal ?? 0), 0)); // Dif. final (DIF. TOTAL); o card "Diferença do operador" usa a Dif. fechamento — medidas diferentes
     return { unidade, valor, percentual: null, grandeza: Math.abs(valor), quantidade: ls.length, detalhe: ls };
   });
   if (lojas.length === 0) return { disponivel: false, rede: redeVazia, lojas };

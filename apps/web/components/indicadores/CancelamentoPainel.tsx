@@ -38,6 +38,7 @@ import {
 } from "@/lib/services/cancelamentoPainel";
 import { buscarCancelamentoPainel } from "@/lib/actions/buscarCancelamentoPainel";
 import { coberturaFaturamentoLoja } from "@/lib/services/brindesAnalise";
+import { CancelamentoMadrugadaAlerta } from "@/components/indicadores/CancelamentoMadrugadaAlerta";
 
 /**
  * Painel analítico de Cancelamento (hoje usado em Cancelamento Salão) — mesma experiência de Compra Direta e
@@ -508,6 +509,11 @@ export function CancelamentoPainel({
           A quantidade de ocorrências e o ticket médio não estão disponíveis nesta base (o registro é agregado por loja, dia e motivo), por isso não são exibidos.
         </p>
       </div>
+
+      {/* Alerta "Cancelamentos após 00h30" (só Cancelamento Salão): detalhes individuais; não altera os indicadores agregados. */}
+      {fonte === "cancelamentoSalao" && (
+        <CancelamentoMadrugadaAlerta inicioOcorrencia={dados.atual.inicioOcorrencia} fimOcorrencia={dados.atual.fimOcorrencia} loja={loja} />
+      )}
 
       {/* 2) O QUE GEROU OS CANCELAMENTOS? — motivos (como na base) → lojas; reconcilia com o total dos cards */}
       <SecaoMotivosCancelamento

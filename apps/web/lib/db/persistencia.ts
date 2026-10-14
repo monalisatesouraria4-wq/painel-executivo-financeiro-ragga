@@ -6,6 +6,7 @@ import {
   faturamento,
   brindes,
   cancelamentoSalao,
+  cancelamentoSalaoDetalhe,
   cancelamentoDelivery,
   compraDireta,
   retiradaDeposito,
@@ -22,6 +23,7 @@ import type { NovaTratativaInput, AtualizarTratativaInput } from "@/lib/services
 import { simularGravacao, chaveDoRegistro, type ResultadoGravacaoSimulada } from "@/lib/import/simularGravacao";
 import { CHAVES_POR_BASE } from "@/lib/rules/chaves";
 import type { RegistroBase } from "@/lib/import/tipos";
+import { chaveDetalhe, type DetalheCancelamentoSalao } from "@/lib/import/parsers/cancelamentoSalaoDetalhe";
 
 /**
  * Persistência real no Postgres para as 6 bases do lote da Visão Geral
@@ -177,6 +179,95 @@ async function persistirListaSimplesComMotivo(
 export function persistirCancelamentoSalao(registros: RegistroBase[]) {
   return persistirListaSimplesComMotivo("cancelamento_salao", cancelamentoSalao, registros);
 }
+export interface ResultadoPersistenciaDetalhes {
+  inseridos: number;
+  atualizados: number;
+  total: number;
+}
+
+/**
+ * Detalhe individual dos estornos do Cancelamento Salão (tabela ADICIONAL; o agregado não é tocado). Upsert pela chave
+ * composta (todos os campos do estorno + ocorrência): reimportar o mesmo arquivo atualiza as mesmas linhas, sem duplicar.
+ * Linhas do banco que não estão no lote são preservadas.
+ */
+export async function persistirCancelamentoSalaoDetalhes(detalhes: DetalheCancelamentoSalao[]): Promise<ResultadoPersistenciaDetalhes> {
+  if (detalhes.length === 0) return { inseridos: 0, atualizados: 0, total: 0 };
+  const db = getDb();
+  const idPorCodigo = await garantirUnidades(db, detalhes.map((d) => d.unidade));
+  const datas = detalhes.map((d) => d.dataCalendario).sort();
+  const tab = cancelamentoSalaoDetalhe;
+
+  const existentes = await db
+    .select({
+      codigo: unidades.codigo,
+      estornoEm: sql<string>`${tab.estornoEm}::text`,
+      comanda: tab.comanda,
+      produto: tab.produto,
+      quantidade: tab.quantidade,
+      valor: tab.valor,
+      motivo: tab.motivo,
+      atendente: tab.atendente,
+      autorizador: tab.autorizador,
+      ocorrencia: tab.ocorrencia,
+    })
+    .from(tab)
+    .innerJoin(unidades, eq(tab.unidadeId, unidades.id))
+    .where(and(inArray(tab.unidadeId, [...idPorCodigo.values()]), between(tab.dataCalendario, datas[0], datas[datas.length - 1])));
+  const chavesExistentes = new Set(
+    existentes.map((e) =>
+      chaveDetalhe({
+        unidade: e.codigo as DetalheCancelamentoSalao["unidade"],
+        estornoEm: e.estornoEm.slice(0, 19),
+        comanda: e.comanda,
+        produto: e.produto,
+        quantidade: Number(e.quantidade),
+        valor: Number(e.valor),
+        motivo: e.motivo,
+        atendente: e.atendente,
+        autorizador: e.autorizador,
+        ocorrencia: e.ocorrencia,
+      })
+    )
+  );
+  const atualizados = detalhes.filter((d) => chavesExistentes.has(chaveDetalhe(d))).length;
+
+  for (let i = 0; i < detalhes.length; i += 500) {
+    await db
+      .insert(tab)
+      .values(
+        detalhes.slice(i, i + 500).map((d) => ({
+          unidadeId: idPorCodigo.get(d.unidade)!,
+          estornoEm: d.estornoEm,
+          dataCalendario: d.dataCalendario,
+          dataOperacional: d.dataOperacional,
+          minutoDoDia: d.minutoDoDia,
+          madrugada: d.madrugada,
+          comanda: d.comanda,
+          produto: d.produto,
+          quantidade: d.quantidade.toFixed(2),
+          valor: d.valor.toFixed(2),
+          motivo: d.motivo,
+          justificativa: d.justificativa,
+          atendente: d.atendente,
+          autorizador: d.autorizador,
+          ocorrencia: d.ocorrencia,
+        }))
+      )
+      .onConflictDoUpdate({
+        target: [tab.unidadeId, tab.estornoEm, tab.comanda, tab.produto, tab.quantidade, tab.valor, tab.motivo, tab.atendente, tab.autorizador, tab.ocorrencia],
+        set: {
+          dataCalendario: sql`excluded.data_calendario`,
+          dataOperacional: sql`excluded.data_operacional`,
+          minutoDoDia: sql`excluded.minuto_do_dia`,
+          madrugada: sql`excluded.madrugada`,
+          justificativa: sql`excluded.justificativa`,
+          atualizadoEm: sql`now()`,
+        },
+      });
+  }
+  return { inseridos: detalhes.length - atualizados, atualizados, total: detalhes.length };
+}
+
 export function persistirCancelamentoDelivery(registros: RegistroBase[]) {
   return persistirListaSimplesComMotivo("cancelamento_delivery", cancelamentoDelivery, registros);
 }
