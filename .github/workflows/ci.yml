@@ -22,6 +22,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # `LayoutProps`/`PageProps` (Next 16) são tipos GLOBAIS gerados em `.next/types` — o diretório é ignorado pelo Git e
+      # não existe em um checkout limpo; sem esta etapa o `tsc` falha com "Cannot find name 'LayoutProps'".
+      - name: Gerar tipos do Next.js
+        run: npx next typegen
+        working-directory: apps/web
+
       - name: Typecheck
         run: npm run typecheck
 
