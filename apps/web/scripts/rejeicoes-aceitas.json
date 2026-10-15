@@ -1,0 +1,8 @@
+{
+  "comentario": "Rejeicoes conhecidas e JA ACEITAS pelo usuario nas atualizacoes anteriores (assinatura = base|motivo|valores brutos). Uma rejeicao desta lista nao pede decisao no comando atualizar-bases; qualquer mudanca nos valores volta a pedir. Linhas em branco, totais/legendas e motivos fora do escopo da Retirada Deposito nunca precisam constar aqui.",
+  "aceitas": [
+    "fechamento|Caixa ou Movto. vazio (caixa=\"\", movto=\"1\")|{\"DATA\":\"01/10/2026\",\"FILIAL\":\"ROBS\",\"MOVTO.\":\"1\"}",
+    "fechamento|Caixa ou Movto. vazio (caixa=\"\", movto=\"1\")|{\"DATA\":\"08/10/2026\",\"FILIAL\":\"ROBS\",\"MOVTO.\":\"1\"}",
+    "troco|Caixa vazio|{\"LOJA\":\"ROBS\",\"DATA\":\"2026-04-22T00:00:00.000Z\"}"
+  ]
+}

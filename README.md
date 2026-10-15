@@ -122,6 +122,28 @@ manualmente no banco (ou nas rotinas aprovadas) e fazer o commit do `.sql`, do
 aplicar os SQL de `supabase/migrations/` em ordem e rodar os scripts de
 `supabase/seed/` (17 unidades + parâmetros de semáforo aprovados).
 
+### Atualizar as bases (comando `atualizar base`)
+
+Comando permanente de linha de comando que usa a **importação oficial** do painel (`processarArquivoBase`: colunas
+obrigatórias, parsers, chaves e upsert) — a mesma da tela "Importação de Bases":
+
+```bash
+cd apps/web
+# 1) simulação (não grava nada): identifica as bases, valida e lista o que precisa de decisão
+npm run atualizar-bases -- "caminho/BRINDES.xlsx" "caminho/CANCEL SALÃO.xlsx" ...
+# 2) gravação (só sem pendências): upsert pela chave oficial, uma base por vez, com conferência de contagens
+npm run atualizar-bases -- "caminho/BRINDES.xlsx" ... --gravar --plano "<plano impresso na simulação>"
+```
+
+- Identifica a base pelas colunas obrigatórias oficiais + nome do arquivo; `CONTROLE DE CONFERENCIA E QUEBRAS DE CAIXA (n).xlsx`
+  alimenta Conferência **e** Quebra de Caixa (ciclo escolhido pela data de hoje; `--ref AAAA-MM-DD` para outra data).
+- Nunca apaga histórico. Cada base é re-simulada antes de gravar, `tabela depois = antes + inseridos`, e qualquer divergência
+  interrompe a execução. Guarda uma referência (contagem + hash) das tabelas e compara ao final.
+- Rejeições que pedem decisão (ex.: data inválida) bloqueiam a gravação; linhas em branco, totais da planilha, motivos fora
+  do escopo da Retirada Depósito e as rejeições já aceitas em `apps/web/scripts/rejeicoes-aceitas.json` não bloqueiam.
+- Cancelamento Salão também grava os detalhes individuais dos estornos (tabela `cancelamento_salao_detalhe`, idempotente).
+- Requer `DATABASE_URL` em `apps/web/.env.local`. O procedimento completo para o Claude Code está no `CLAUDE.md` da raiz.
+
 ## Estado do projeto / próximas etapas
 
 1. ✅ **Etapa 1 — Fundação.**
