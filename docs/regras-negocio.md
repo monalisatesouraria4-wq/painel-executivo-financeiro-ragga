@@ -18,18 +18,20 @@ Fonte única no código: `packages/shared/unidades.ts`.
 
 ## Regras de Data
 
+**REGRA ÚNICA (decisão definitiva): a data selecionada no filtro é a data consultada. Não existe deslocamento D-1, D-2 ou D-3 em nenhuma tela, serviço ou consulta; sem registros na data, o painel mostra zero/"sem dados" (nunca busca o dia anterior).**
+
 | Base | Regra |
 |---|---|
-| Brindes | D-1 |
-| Cancelamentos (Salão/Delivery) | D-1 |
-| Compra Direta | D-1 |
-| Retirada Depósito | D-1 |
+| Brindes | Data literal (sem D-1) |
+| Cancelamentos (Salão/Delivery) | Data literal (sem D-1) |
+| Compra Direta | Data literal (sem D-1) |
+| Retirada Depósito | Data literal (sem D-1) |
 | Fechamento de Caixa | data selecionada |
-| PDV × Maquininha | D-2 |
-| Conferência | D-2 |
+| PDV × Maquininha | Data literal (sem D-2) |
+| Conferência | Data literal / ciclo 16→15 (sem D-2) |
 | Troco | semana real correspondente ao período selecionado |
 
-Implementado em `apps/web/lib/rules/datas.ts`.
+Implementado em `apps/web/lib/rules/datas.ts`. **Cancelamento Salão — madrugada:** estornos entre 00h31 e 05h59 continuam classificados com data operacional (dia anterior), mas o filtro de data do alerta usa a data oficial do estorno (`data_calendario`, a mesma do agregado).
 
 ## Regras Importantes por Base
 
@@ -61,7 +63,7 @@ Implementado em `apps/web/lib/rules/datas.ts`.
 - **Troco:** NÃO deduplicar. Registros repetidos são legítimos.
   Reimportação de um período substitui apenas o período enviado.
   Usa as datas reais da semana. Não inventar tolerância. Não alterar registros originais.
-- **Quebra de Caixa:** NÃO deduplicar. Lançamentos repetidos são legítimos.
+- **Quebra de Caixa:** NÃO deduplicar. Lançamentos repetidos são legítimos (preservados pela `ocorrencia` na chave — ver "Quebra de Caixa", Etapa 6).
   Reimportação de um período substitui apenas o período enviado.
 
 Implementado em `apps/web/lib/rules/deduplicacao.ts` e `chaves.ts`.
@@ -75,7 +77,7 @@ Implementado em `apps/web/lib/rules/deduplicacao.ts` e `chaves.ts`.
 - **Parcial** = Conferido < Total.
 - **Inconsistente** = Conferido > Total.
 - **Pendente** = Total - Conferido.
-- **Em atraso** quando aplicável pela regra D-2/global de referência.
+- **Em atraso** conforme a marcação oficial da planilha (sem deslocamento de data).
 - **MAPOLI não possui conferência aos finais de semana.**
 
 Implementado (esqueleto, a validar na Etapa 3) em `apps/web/lib/rules/conferenciaStatus.ts`.
@@ -155,7 +157,7 @@ Implementado em `packages/shared/perfis.ts` (constantes de perfil).
 
 Único ponto de verdade para cada regra, em `apps/web/lib/rules/`:
 
-- `datas.ts` — D-1, D-2, semana real.
+- `datas.ts` — semana real (não há funções de deslocamento D-1/D-2).
 - `resolverAba.ts` — resolução de aba por período (Conferência, Quebra de Caixa).
 - `semaforos.ts` — thresholds por indicador.
 - `deduplicacao.ts` — estratégia de gravação (upsert vs delete+insert) por base.
@@ -479,7 +481,7 @@ foram inventadas nem deduzidas por suposição.
   Nenhuma linha é excluída por cancelamento ou valor negativo.
 - **Chave de reimportação:** `Filial + Data` (upsert — substitui o valor
   do dia, não soma de novo).
-- **Regra de data:** D-1.
+- **Regra de data:** literal (início e fim do filtro, inclusive; sem D-1).
 
 ### PDV × Maquininha
 - **Fonte oficial:** `PDV X Adquirente - Consolidado.xlsx`, aba `Export`
@@ -493,7 +495,7 @@ foram inventadas nem deduzidas por suposição.
   (`valorPDV`, `valorMaquininha`, `diferenca`) — a diferença não é
   recalculada, é lida direto da planilha.
 - **Chave de reimportação:** `Filial + Data + Forma` (upsert).
-- **Regra de data:** D-2, aplicada em tempo de consulta sobre a única
+- **Regra de data:** literal (sem D-2), sobre a única
   coluna `Data` existente (não há uma segunda coluna de "data da
   máquina" em nenhum arquivo real).
 
@@ -698,10 +700,17 @@ já registrada acima).
 ### 3. Quebra de Caixa
 
 Schema (`quebra_caixa`) ganhou os campos: `conferente`, `operador`,
-`cpf`, `motivo`. Chave (upsert):
-`unidade_id+data+conferente+operador+cpf+motivo` — bate exatamente com
-`chaveQuebraConf` do painel. O **valor da quebra nunca entra na chave**
+`cpf`, `motivo`. Chave natural: `unidade_id+data+conferente+operador+cpf+motivo`
+(`chaveQuebraConf` do painel). O **valor da quebra nunca entra na chave**
 — uma correção de valor atualiza o registro, não cria outro.
+
+**Identificação por ocorrência (migração 0004, decisão do usuário: lançamentos repetidos com a mesma chave natural são
+ocorrências reais e devem ser preservados).** Chave oficial = chave natural + `ocorrencia`. `ocorrencia` = posição do
+lançamento, por valor crescente, dentro do grupo de mesma chave natural na planilha (`lib/import/ocorrenciaQuebra.ts`). Não usa o
+número da linha (instável a inserções/ordenações). Reordenar linhas não muda nada; corrigir valor atualiza a mesma ocorrência;
+incluir uma ocorrência acrescenta 1 registro; remover uma deixa a de maior número "só no banco" (o upsert nunca exclui). A gravação
+recusa o lote se a coluna não existir ou se houver chave oficial repetida. SQL: `supabase/migrations/0004_quebra_caixa_ocorrencia.sql`
+(registros existentes = ocorrência 1; rollback documentado no arquivo).
 
 ### 4. Troco
 
@@ -807,7 +816,7 @@ investigação.**
 | Fechamento de Caixa | unidade+data+caixa+movimento | `chaveFechamento` | ✅ |
 | Troco | unidade+data+caixa | `chaveTroco` | ✅ |
 | Retirada Depósito | unidade+data+caixa+motivo+motivo_descricao+usuario+usuario_autorizador | `chaveRetirada` | ✅ |
-| Quebra de Caixa | unidade+data+conferente+operador+cpf+motivo | `chaveQuebraConf` | ✅ |
+| Quebra de Caixa | unidade+data+conferente+operador+cpf+motivo+**ocorrência** | `chaveQuebraConf` + ocorrência (migração 0004) | ✅ |
 | PDV × Maquininha | unidade+data+forma_pagamento | `chavePdv` | ✅ (validado também manualmente pelo usuário) |
 | Faturamento | unidade+data | `chaveFaturamento` | ✅ |
 

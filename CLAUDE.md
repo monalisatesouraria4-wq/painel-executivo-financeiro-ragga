@@ -31,6 +31,14 @@ Não crie scripts descartáveis, não leia as planilhas por conta própria nem g
    segurança (contagem + hash) das tabelas, regrava cada base pelo fluxo oficial `processarArquivoBase` (só upsert pela chave
    oficial — nunca apaga histórico), confere `tabela depois = antes + inseridos`, interrompe na primeira divergência e, ao
    final, compara com a referência. O Cancelamento Salão também grava os detalhes individuais dos estornos (idempotente).
+   **Faturamento, Brindes, Cancelamentos, Compra Direta e Retirada Depósito usam a sincronização autoritativa** (ver
+   `docs/politica-sincronizacao-bases.md`): a simulação mostra novos/alterados/só-no-banco, riscos e o **hash do plano**.
+   **As exclusões são opt-in em todos os ambientes** (`SINCRONIZACAO_EXCLUSOES_HABILITADAS=1`; o `.env.local` mantém `=0`): nunca altere essa variável sem pedido explícito do usuário.
+   Registros só no banco **nunca** são excluídos sem a aprovação explícita do usuário por base:
+   `--aprovar-exclusoes <base>=<hash> --backup-dir <pasta>`; use `--sem-exclusao <base>` para gravar só novos/alterados.
+   O arquivo enviado é a **base mestre completa**: o objetivo é o banco ESPELHAR a planilha (a simulação mostra "ESPELHA/NÃO ESPELHA"); exclusões seguem o procedimento de `docs/politica-sincronizacao-bases.md` §8 (backup durável + `--restaurar` para desfazer).
+   Não aprove exclusões por conta própria nem presuma que um antigo e um novo são o mesmo lançamento por coincidência de
+   loja+dia+valor; loja ausente do arquivo nunca autoriza exclusão. Brindes: não gravar sem decisão do usuário (760 só-no-banco em investigação).
 4. **Relatório.** Informe por base: arquivo, válidos, **inseridos, atualizados, rejeitados** e erros, contagens antes/depois e
    o comparativo final × referência. Não dê a base por concluída só porque o processo terminou sem erro.
 5. **Falha ou divergência:** pare, explique e aguarde. Não tente contornar, não reimporte "para ver se resolve".

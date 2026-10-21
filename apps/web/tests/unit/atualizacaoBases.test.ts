@@ -101,6 +101,20 @@ describe("processarArquivoBase — compra_direta (integração real com parser +
       expect(resultado.mensagem).toContain("Nenhuma linha válida foi encontrada");
     }
   });
+
+  it("Compra Direta com qualquer linha rejeitada bloqueia a prévia autoritativa", async () => {
+    const arquivo = await gerarXlsx([
+      ["FILIAL", "DATA", "VALOR", "MOTIVO"],
+      ["BG 01", "10/09/2026", 150, "OPEX"],
+      ["LOJA INVÁLIDA", "10/09/2026", 25, "FIXAS"],
+    ]);
+    const resultado = await processarArquivoBase("compraDireta", arquivo, [], new Date("2026-09-10"));
+    expect(resultado.status).toBe("erro");
+    if (resultado.status === "erro") {
+      expect(resultado.mensagem).toContain("Sincronização autoritativa bloqueada");
+      expect(resultado.mensagem).toContain("1 linha(s) rejeitada(s)");
+    }
+  });
 });
 
 describe("processarArquivoBase — pdv_maquininha (colunas 'contains', não exatas)", () => {

@@ -13,7 +13,8 @@
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "atualizar-bases": "node --env-file=.env.local --import tsx scripts/atualizar-bases.ts"
+    "atualizar-bases": "node --env-file=.env.local --import tsx scripts/atualizar-bases.ts",
+    "painel:sincronizacao": "node scripts/painel-sincronizacao.mjs"
   },
   "dependencies": {
     "@painel/shared": "*",

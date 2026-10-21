@@ -1,7 +1,6 @@
 import { and, between, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { unidades, retiradaDeposito } from "@/lib/db/schema";
-import { dataDMenos1 } from "@/lib/rules/datas";
 import { dataDeDeposito, inicioCicloDeposito } from "@/lib/rules/deposito";
 import type { RetiradaDepositoDiaData, RetiradaDepositoDiaLinha, BannerRetiradaDia } from "./retiradaDeposito";
 import { rotuloDepositoEsperado } from "./retiradaDeposito";
@@ -14,7 +13,7 @@ import { rotuloDepositoEsperado } from "./retiradaDeposito";
  */
 export async function buscarRetiradaDepositoDia(dataReferencia: Date): Promise<RetiradaDepositoDiaData> {
   const conectado = Boolean(process.env.DATABASE_URL);
-  const d1 = dataDMenos1(dataReferencia);
+  const d1 = dataReferencia; // data literal (sem D-1); nome mantido por compatibilidade do tipo
 
   const base: RetiradaDepositoDiaData = {
     conectado,

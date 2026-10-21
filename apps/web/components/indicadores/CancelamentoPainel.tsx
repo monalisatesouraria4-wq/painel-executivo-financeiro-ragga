@@ -352,7 +352,7 @@ export function CancelamentoPainel({
   const inputCls = "rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40";
   const periodoAtualTxt = `${diaMesAno(inicio)} a ${diaMesAno(fim)}`;
   const periodoCompTxt = `${diaMesAno(compInicio)} a ${diaMesAno(compFim)}`;
-  // Datas de OCORRÊNCIA (D-1) — as que de fato foram somadas; usadas nas seções novas para não confundir com a referência.
+  // Datas literais do período — as mesmas somadas e exibidas no filtro.
   const ocorrAtualTxt = `${diaMesAno(dados.atual.inicioOcorrencia)} a ${diaMesAno(dados.atual.fimOcorrencia)}`;
   const ocorrCompTxt = `${diaMesAno(dados.comparacao.inicioOcorrencia)} a ${diaMesAno(dados.comparacao.fimOcorrencia)}`;
 
@@ -398,7 +398,7 @@ export function CancelamentoPainel({
         {pendente && <span className="pb-2 text-xs text-foreground/50">Carregando...</span>}
       </div>
       <p className="-mt-3 px-1 text-[11px] text-foreground/45">
-        Regra D-1 da aba: ocorrências de {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
+        Período consultado (datas literais, inclusive): {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
         {diaMesAno(dados.comparacao.inicioOcorrencia)} a {diaMesAno(dados.comparacao.fimOcorrencia)}).
       </p>
 
@@ -649,7 +649,7 @@ export function CancelamentoPainel({
           </table>
         </div>
         <p className="mt-3 text-[11px] text-foreground/40">
-          Comparado: {ocorrCompTxt} (datas de ocorrência). Variação e situação só aparecem com a base e o faturamento completos da loja nos dois períodos. Loja com faturamento em menos dias que o período fica sem % e sem status (valores em R$ mantidos).
+          Comparado: {ocorrCompTxt}. Variação e situação só aparecem com a base e o faturamento completos da loja nos dois períodos. Loja com faturamento em menos dias que o período fica sem % e sem status (valores em R$ mantidos).
         </p>
       </Secao>
 
@@ -671,10 +671,10 @@ export function CancelamentoPainel({
       <Secao titulo="Comparativo de períodos">
         <div className="mb-3 grid gap-1 text-xs text-foreground/60 sm:grid-cols-2">
           <p>
-            <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt} (ocorrências {ocorrAtualTxt})
+            <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt}
           </p>
           <p>
-            <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt} (ocorrências {ocorrCompTxt})
+            <span className="font-semibold text-ragga-blue-dark">Período comparado:</span> {periodoCompTxt}
           </p>
         </div>
         <div className="overflow-x-auto">

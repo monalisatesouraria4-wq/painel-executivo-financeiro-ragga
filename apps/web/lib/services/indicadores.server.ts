@@ -1,7 +1,6 @@
 import { and, between, eq, sql } from "drizzle-orm";
 import { UNIDADES, type CodigoUnidade } from "@painel/shared";
 import { classificarSemaforo } from "@/lib/rules/semaforos";
-import { dataDMenos1 } from "@/lib/rules/datas";
 import { getDb } from "@/lib/db/client";
 import { unidades, faturamento, brindes, cancelamentoSalao, cancelamentoDelivery, compraDireta } from "@/lib/db/schema";
 import { buscarConfigFonte, type FonteIndicador, type IndicadorData, type MotivoLinha, type SubmotivoLinha, type FilialIndicadorLinha } from "./indicadores";
@@ -12,8 +11,8 @@ import { buscarConfigFonte, type FonteIndicador, type IndicadorData, type Motivo
  * importado pela Server Component da página — nunca por componentes
  * client (ver nota em `indicadores.ts`).
  *
- * Com `DATABASE_URL`: janela D-1 (`dataDMenos1`, mesma regra já usada em
- * `visaoGeral.ts` — modo "Dia" do legado, o padrão). Ordenação de "Por
+ * Com `DATABASE_URL`: janela LITERAL (data escolhida = data consultada, sem D-1,
+ * igual à Visão Geral). Ordenação de "Por
  * unidade": ordem canônica de `UNIDADES`, nunca por valor (confirmado no
  * legado, `compareFilial`).
  *
@@ -28,8 +27,7 @@ const TABELA_POR_FONTE = {
 } as const;
 
 /**
- * Núcleo compartilhado — recebe a janela de datas JÁ DESLOCADA (D-1
- * aplicado pelo chamador) e um filtro de loja opcional. `buscarIndicador`
+ * Núcleo compartilhado — recebe a janela de datas literal (início/fim inclusive) e um filtro de loja opcional. `buscarIndicador`
  * (assinatura antiga, usada por Visão Geral/Análise Gerencial/Fechamento
  * Semanal-WhatsApp) e `buscarIndicadorPeriodo` (novo, item 2 da etapa de
  * revisão — filtro de Loja + Período em Indicadores/Retiradas) só
@@ -191,18 +189,15 @@ async function buscarIndicadorJanela(
   };
 }
 
-/** Assinatura original (D-1 sobre uma única data) — inalterada, usada por Visão Geral/Fechamento Semanal-WhatsApp. */
+/** Um único dia, LITERAL (sem D-1): consulta exatamente `dataReferencia`. */
 export async function buscarIndicador(fonte: FonteIndicador, dataReferencia: Date = new Date()): Promise<IndicadorData> {
-  const d1 = dataDMenos1(dataReferencia);
-  return buscarIndicadorJanela(fonte, d1, d1, undefined);
+  return buscarIndicadorJanela(fonte, dataReferencia, dataReferencia, undefined);
 }
 
 /**
  * Filtro de Loja + Período (item 2 da etapa de revisão) — Indicadores e
- * Retiradas > Compra Direta. A regra D-1 é preservada aplicando o
- * deslocamento de 1 dia às DUAS pontas do intervalo escolhido pela
- * usuária (mesma função `dataDMenos1` já validada, nenhuma data
- * inventada): período 01/09–30/09 vira janela real 31/08–29/09.
+ * Retiradas > Compra Direta. Datas LITERAIS: período 01/09–30/09 consulta
+ * exatamente 01/09 a 30/09, inclusive (sem deslocamento D-1).
  */
 export async function buscarIndicadorPeriodo(
   fonte: FonteIndicador,
@@ -210,5 +205,5 @@ export async function buscarIndicadorPeriodo(
   dataFim: Date,
   unidade?: CodigoUnidade
 ): Promise<IndicadorData> {
-  return buscarIndicadorJanela(fonte, dataDMenos1(dataInicio), dataDMenos1(dataFim), unidade);
+  return buscarIndicadorJanela(fonte, dataInicio, dataFim, unidade);
 }

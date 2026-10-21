@@ -63,9 +63,9 @@ describe("chaves de deduplicação (conforme especificado no planejamento)", () 
       "unidade_id", "data", "caixa", "motivo", "motivo_descricao", "usuario", "usuario_autorizador",
     ]);
   });
-  it("quebra_caixa: filial+data+conferente+operador+cpf+motivo (chaveQuebraConf do painel)", () => {
+  it("quebra_caixa: filial+data+conferente+operador+cpf+motivo (chaveQuebraConf do painel) + ocorrência (valor fora da chave)", () => {
     expect(CHAVES_POR_BASE.quebra_caixa).toEqual([
-      "unidade_id", "data", "conferente", "operador", "cpf", "motivo",
+      "unidade_id", "data", "conferente", "operador", "cpf", "motivo", "ocorrencia",
     ]);
   });
 });

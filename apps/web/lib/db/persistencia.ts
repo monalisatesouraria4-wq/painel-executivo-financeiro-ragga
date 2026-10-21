@@ -23,6 +23,7 @@ import type { NovaTratativaInput, AtualizarTratativaInput } from "@/lib/services
 import { simularGravacao, chaveDoRegistro, type ResultadoGravacaoSimulada } from "@/lib/import/simularGravacao";
 import { CHAVES_POR_BASE } from "@/lib/rules/chaves";
 import type { RegistroBase } from "@/lib/import/tipos";
+import { alinharOcorrenciasComExistentes, chaveNaturalQuebra, chavesOficiaisRepetidas } from "@/lib/import/ocorrenciaQuebra";
 import { chaveDetalhe, type DetalheCancelamentoSalao } from "@/lib/import/parsers/cancelamentoSalaoDetalhe";
 
 /**
@@ -680,6 +681,13 @@ export async function persistirQuebraCaixa(
 ): Promise<ResultadoPersistencia> {
   const db = getDb();
 
+  // Garantias ANTES de qualquer escrita: (1) a migração 0004 (coluna `ocorrencia`) já foi aplicada; (2) nenhum lançamento será
+  // somado a outro nem descartado em silêncio (toda chave oficial é única no lote, conferido depois do alinhamento com o banco).
+  const [coluna] = await db.execute<{ existe: boolean }>(
+    sql`select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'quebra_caixa' and column_name = 'ocorrencia') as existe`
+  );
+  if (!coluna?.existe) throw new Error("Migração 0004 (quebra_caixa.ocorrencia) ainda não foi aplicada no banco — Quebra de Caixa não foi gravada.");
+
   await db
     .insert(fontesPorPeriodo)
     .values({
@@ -715,6 +723,7 @@ export async function persistirQuebraCaixa(
       operador: quebraCaixa.operador,
       cpf: quebraCaixa.cpf,
       motivo: quebraCaixa.motivo,
+      ocorrencia: quebraCaixa.ocorrencia,
       valor: quebraCaixa.valor,
     })
     .from(quebraCaixa)
@@ -725,9 +734,18 @@ export async function persistirQuebraCaixa(
     unidade: e.codigo as RegistroBase["unidade"],
     data: e.data,
     valor: Number(e.valor),
-    extras: { conferente: e.conferente, operador: e.operador, cpf: e.cpf, motivo: e.motivo },
+    extras: { conferente: e.conferente, operador: e.operador, cpf: e.cpf, motivo: e.motivo, ocorrencia: String(e.ocorrencia) },
     linhaOrigem: 0,
   }));
+
+  // Alinha os números de ocorrência ao que já existe (preserva a identidade de cada ocorrência numa correção de valor) e só então
+  // confere que nenhum lançamento será somado a outro nem descartado em silêncio.
+  registros = alinharOcorrenciasComExistentes(
+    registros,
+    estadoExistente.map((e) => ({ chaveNatural: chaveNaturalQuebra(e), ocorrencia: Number(e.extras.ocorrencia), valor: e.valor }))
+  );
+  const repetidas = chavesOficiaisRepetidas(registros);
+  if (repetidas.length > 0) throw new Error(`Lote de Quebra com ${repetidas.length} chave(s) oficial(is) repetida(s) — nenhum lançamento foi gravado.`);
 
   await db
     .insert(quebraCaixa)
@@ -740,6 +758,7 @@ export async function persistirQuebraCaixa(
         operador: r.extras.operador ?? "",
         cpf: r.extras.cpf ?? "",
         motivo: r.extras.motivo ?? "",
+        ocorrencia: Number(r.extras.ocorrencia ?? 1),
         fontePeriodoId: fonteId,
       }))
     )
@@ -751,6 +770,7 @@ export async function persistirQuebraCaixa(
         quebraCaixa.operador,
         quebraCaixa.cpf,
         quebraCaixa.motivo,
+        quebraCaixa.ocorrencia,
       ],
       set: { valor: sql`excluded.valor`, fontePeriodoId: sql`excluded.fonte_periodo_id`, atualizadoEm: sql`now()` },
     });

@@ -1,23 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { dataDMenos1, dataDMenos2, semanaRealDoPeriodo } from "@/lib/rules/datas";
+import { semanaRealDoPeriodo } from "@/lib/rules/datas";
 
-describe("dataDMenos1", () => {
-  it("calcula o dia anterior", () => {
-    expect(dataDMenos1(new Date("2026-09-24")).toISOString().slice(0, 10)).toBe("2026-09-23");
-  });
-
-  it("respeita virada de mês", () => {
-    expect(dataDMenos1(new Date("2026-10-01")).toISOString().slice(0, 10)).toBe("2026-09-30");
-  });
-
-  it("respeita virada de ano", () => {
-    expect(dataDMenos1(new Date("2027-01-01")).toISOString().slice(0, 10)).toBe("2026-12-31");
-  });
-});
-
-describe("dataDMenos2", () => {
-  it("calcula dois dias antes, cruzando virada de mês", () => {
-    expect(dataDMenos2(new Date("2026-03-01")).toISOString().slice(0, 10)).toBe("2026-02-27");
+describe("regra única de datas", () => {
+  it("lib/rules/datas.ts não exporta funções de deslocamento (D-1/D-2)", async () => {
+    const m = await import("@/lib/rules/datas");
+    expect(Object.keys(m)).toEqual(["semanaRealDoPeriodo"]);
   });
 });
 

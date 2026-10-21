@@ -1,14 +1,9 @@
 "use server";
 
 import type { BaseId } from "@/lib/services/atualizacaoBases";
+import { baseSnapshot } from "@/lib/import/basesSnapshot";
 import type { RegistroBase } from "@/lib/import/tipos";
 import {
-  persistirFaturamento,
-  persistirBrindes,
-  persistirCancelamentoSalao,
-  persistirCancelamentoDelivery,
-  persistirCompraDireta,
-  persistirRetiradaDeposito,
   persistirFechamento,
   persistirPdvMaquininha,
   persistirTroco,
@@ -38,19 +33,13 @@ export async function persistirBaseNoBanco(
   // component (sempre `undefined` lá, mesmo com banco configurado).
   if (!process.env.DATABASE_URL) return null;
 
+  // Bases com sincronização autoritativa NÃO podem ser gravadas por este upsert antigo (ele deixaria registros antigos somados):
+  // a única via é `lib/actions/sincronizacaoBases.ts` (simulação → aprovação por hash → backup → transação).
+  if (baseSnapshot(id)) {
+    throw new Error(`A base "${id}" usa a sincronização autoritativa: grave pela prévia de sincronização, não pelo upsert direto.`);
+  }
+
   switch (id) {
-    case "faturamento":
-      return persistirFaturamento(registros);
-    case "brindes":
-      return persistirBrindes(registros);
-    case "cancelamentoSalao":
-      return persistirCancelamentoSalao(registros);
-    case "cancelamentoDelivery":
-      return persistirCancelamentoDelivery(registros);
-    case "compraDireta":
-      return persistirCompraDireta(registros);
-    case "retiradaDeposito":
-      return persistirRetiradaDeposito(registros);
     case "fechamento":
       return persistirFechamento(registros);
     case "pdvMaquininha":

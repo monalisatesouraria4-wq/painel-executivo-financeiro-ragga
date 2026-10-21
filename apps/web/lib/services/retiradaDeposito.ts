@@ -18,8 +18,8 @@ import type { CodigoUnidade } from "@painel/shared";
  *   (chamado `classificacao` no legado, `motivo` no nosso schema/parser
  *   — mesma coluna de origem "Motivo" da planilha) === "DEPOSITO". Já
  *   implementado em `lib/import/parsers/retiradaDeposito.ts`.
- * - Modo "Dia": sempre D-1 (`lib/rules/datas.ts` → `dataDMenos1`).
- *   Colunas: Filial | Retirada do dia (D-1) | Acumulado do ciclo | Ciclo.
+ * - Modo "Dia": data LITERAL selecionada (sem D-1).
+ *   Colunas: Filial | Retirada do dia | Acumulado do ciclo | Ciclo.
  * - Modo "Personalizado": cada ciclo somado por inteiro numa linha
  *   própria. Colunas: Filial | Ciclo | Retirada no ciclo | Depósito
  *   esperado.

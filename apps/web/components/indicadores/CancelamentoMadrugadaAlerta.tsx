@@ -7,8 +7,8 @@ import { buscarCancelamentoMadrugada } from "@/lib/actions/buscarCancelamentoMad
 import type { MadrugadaDados } from "@/lib/services/cancelamentoMadrugada.server";
 
 /**
- * Alerta "Cancelamentos após 00h30" da aba Cancelamento Salão. Estornos lançados entre 00h31 e 05h59, atribuídos ao dia
- * operacional ANTERIOR; usa a mesma janela de ocorrência (D-1) e o mesmo filtro de loja da aba. Os detalhes vêm da tabela
+ * Alerta "Cancelamentos após 00h30" da aba Cancelamento Salão. Estornos lançados entre 00h31 e 05h59, classificados no dia
+ * operacional ANTERIOR (classificação exibida; o filtro usa a data oficial do estorno); usa a mesma janela (datas literais) e o mesmo filtro de loja da aba. Os detalhes vêm da tabela
  * adicional de estornos individuais — os indicadores agregados da aba não são alterados. O segundo alerta (venda após
  * 00h30 cancelada depois) está indisponível: a base não tem o horário da venda original nem vínculo venda × cancelamento.
  */
@@ -53,7 +53,7 @@ export function CancelamentoMadrugadaAlerta({ inicioOcorrencia, fimOcorrencia, l
   return (
     <Secao titulo="🌙 Cancelamentos após 00h30">
       <p className="mb-3 text-xs text-foreground/60">
-        Estornos lançados entre 00h31 e 05h59 (00h30 e 06h00 ficam de fora), atribuídos ao dia operacional anterior. Período operacional: {periodo}
+        Estornos lançados entre 00h31 e 05h59 (00h30 e 06h00 ficam de fora), classificados no dia operacional anterior (o filtro usa a data oficial do estorno). Período consultado: {periodo}
         {loja !== "TODAS" ? ` · ${loja}` : ""}.
       </p>
 

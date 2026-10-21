@@ -32,7 +32,7 @@ import {
   ordenarLojasBrindes,
   type OrdemLojasBrindes,
 } from "@/lib/services/brindesAnalise";
-import { hojeNegocio, janelaAnterior, somarDias, ultimaSemanaCompleta } from "@/lib/services/resumoSemanal";
+import { hojeNegocio, janelaAnterior, ultimaSemanaCompleta } from "@/lib/services/resumoSemanal";
 
 /**
  * Painel analítico da aba Brindes (Indicadores) — mesma experiência da Compra Direta. TOTAL de Brindes =
@@ -461,14 +461,14 @@ export function BrindesPainel({
     carregar(inicio, fim, ci, cf);
   }
 
-  /** Atalho: última semana COMPLETA (seg–dom, ocorrência) × semana completa imediatamente anterior. A aba usa D-1, então a referência é ocorrência + 1 dia. */
+  /** Atalho: última semana COMPLETA (seg–dom) × semana completa imediatamente anterior, em datas literais. */
   function usarUltimaSemanaCompleta() {
     const sem = ultimaSemanaCompleta(hojeNegocio());
     const ant = janelaAnterior(sem);
-    const i = somarDias(sem.inicio, 1);
-    const f = somarDias(sem.fim, 1);
-    const ci = somarDias(ant.inicio, 1);
-    const cf = somarDias(ant.fim, 1);
+    const i = sem.inicio;
+    const f = sem.fim;
+    const ci = ant.inicio;
+    const cf = ant.fim;
     setCompManual(true);
     setInicio(i);
     setFim(f);
@@ -522,7 +522,7 @@ export function BrindesPainel({
   const inputCls = "rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40";
   const periodoAtualTxt = `${diaMesAno(inicio)} a ${diaMesAno(fim)}`;
   const periodoCompTxt = `${diaMesAno(compInicio)} a ${diaMesAno(compFim)}`;
-  // Datas de OCORRÊNCIA (D-1) — as que de fato foram somadas; usadas nas seções novas para não confundir com a referência.
+  // Datas literais do período — as mesmas somadas e exibidas no filtro.
   const ocorrAtualTxt = `${diaMesAno(dados.atual.inicioOcorrencia)} a ${diaMesAno(dados.atual.fimOcorrencia)}`;
   const ocorrCompTxt = `${diaMesAno(dados.comparacao.inicioOcorrencia)} a ${diaMesAno(dados.comparacao.fimOcorrencia)}`;
   const slot = (v: number, ok: boolean, fmt: (n: number) => string) => (ok ? fmt(v) : "Sem dados");
@@ -590,7 +590,7 @@ export function BrindesPainel({
         {pendente && <span className="pb-2 text-xs text-foreground/50">Carregando...</span>}
       </div>
       <p className="-mt-3 px-1 text-[11px] text-foreground/45">
-        Regra D-1 da aba: ocorrências de {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
+        Período consultado (datas literais, inclusive): {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
         {diaMesAno(dados.comparacao.inicioOcorrencia)} a {diaMesAno(dados.comparacao.fimOcorrencia)}).
       </p>
 

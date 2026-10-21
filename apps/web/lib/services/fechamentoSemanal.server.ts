@@ -16,8 +16,6 @@ import {
 import { buscarTrocoDaSemana } from "@/lib/services/controlesCaixa";
 import {
   normalizarPeriodo,
-  janelaD1,
-  janelaD2,
   resumirConferenciaSemana,
   type FechamentoSemanalData,
   type SemanalReportData,
@@ -27,11 +25,9 @@ import { agregarEmBuckets } from "@/lib/rules/formasPagamento";
 /**
  * Consulta real ao Postgres para "Fechamento Semanal" — reaproveita
  * exatamente as janelas já documentadas em `fechamentoSemanal.ts`
- * (D-1 para Faturamento/Formas de Pagamento/Brindes/Cancelamentos/Compra
- * Direta, D-2 para PDV×Maquininha, data literal para Fechamento/Quebra,
- * semana real para Troco via `buscarTrocoDaSemana`; Conferência = registros
+ * (data literal em todos os blocos — sem D-1/D-2 —, semana real para Troco via `buscarTrocoDaSemana`; Conferência = registros
  * loja × dia de `iniBase..fimBase` agregados por `resumirConferenciaGerencial`,
- * a mesma regra da aba Conferência). Formas de Pagamento: mesma janela D-1 do Faturamento,
+ * a mesma regra da aba Conferência). Formas de Pagamento: mesma janela literal do Faturamento,
  * classificada nas 8 categorias via `agregarEmBuckets`.
  */
 
@@ -73,8 +69,8 @@ export async function buscarFechamentoSemanal(iniISO: string, fimISO: string): P
   }
 
   const db = getDb();
-  const d1 = janelaD1(iniBase, fimBase);
-  const d2 = janelaD2(iniBase, fimBase);
+  const d1 = { inicio: iniBase, fim: fimBase }; // data literal (sem D-1)
+  const d2 = { inicio: iniBase, fim: fimBase }; // PDV × Maquininha: data literal (sem D-2)
 
   const [
     fat,

@@ -14,8 +14,7 @@ import { periodoComparacaoPadrao, ultimoMesFechado } from "@/lib/rules/mesAnteri
  *
  * Entrada de navegação (links da Visão Geral / Central de Caixa), no mesmo padrão
  * dos Indicadores: `?fonte=compraDireta&inicio=&fim=&loja=`. `fonte=compraDireta`
- * abre a sub-aba de Compra Direta; `inicio`/`fim` são a data de REFERÊNCIA (a regra
- * D-1 da Compra Direta continua aplicada no serviço); `loja` pré-seleciona a loja.
+ * abre a sub-aba de Compra Direta; `inicio`/`fim` são o período LITERAL (sem D-1); `loja` pré-seleciona a loja.
  * Comparação: mês anterior (se o período for um mês completo) ou o período
  * imediatamente anterior de mesma duração. Parâmetros inválidos são ignorados.
  */

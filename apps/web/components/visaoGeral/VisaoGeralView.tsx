@@ -741,11 +741,9 @@ export function VisaoGeralView({
     return popover(titulo, ehFaturamento ? [bloco] : [blocoFaturamento("Faturamento"), bloco], no, alinharDireita, undefined, href);
   }
 
-  // Navegação para Indicadores (Central de Caixa): a aba aplica D-1 sobre a data de referência, então enviamos o
-  // dia seguinte para abrir exatamente o mesmo período mostrado nos cards.
-  const diaSeguinte = (valor: string) => paraInputDate(new Date(dataDoInput(valor).getTime() + 86_400_000));
+  // Navegação para Indicadores (Central de Caixa): datas literais — a aba abre exatamente o mesmo período dos cards.
   const parametrosNavegacao = (fonte: string) =>
-    `fonte=${fonte}&inicio=${diaSeguinte(dataInicioSel)}&fim=${diaSeguinte(dataFimSel)}${lojaFiltro !== "TODAS" ? `&loja=${encodeURIComponent(lojaFiltro)}` : ""}`;
+    `fonte=${fonte}&inicio=${dataInicioSel}&fim=${dataFimSel}${lojaFiltro !== "TODAS" ? `&loja=${encodeURIComponent(lojaFiltro)}` : ""}`;
   const hrefIndicador = (fonte: string) => `/indicadores?${parametrosNavegacao(fonte)}`;
   // Compra Direta vive em Retiradas (sub-aba "Retirada Compra Direta"): mesmo padrão de parâmetros (fonte/inicio/fim/loja).
   const hrefCompraDireta = `/retiradas?${parametrosNavegacao("compraDireta")}`;

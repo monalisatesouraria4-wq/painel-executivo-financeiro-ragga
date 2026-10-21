@@ -14,7 +14,7 @@ import type { CompraDiretaPainelData } from "@/lib/services/compraDiretaPainel";
  * "Retirada para Depósito" mantém o filtro de Loja + Período (ciclo de depósito,
  * inalterado). "Retirada Compra Direta" é o painel de performance
  * (`CompraDiretaPainel`): filtros próprios (período atual + período de
- * comparação + loja), regra D-1 e thresholds já existentes.
+ * comparação + loja), datas literais e thresholds já existentes.
  */
 const SUBABAS = [
   { id: "deposito", nome: "Retirada para Depósito" },
