@@ -46,6 +46,15 @@ describe("data literal — sem deslocamento D-1", () => {
     expect(trecho).not.toMatch(/fontePeriodoId|fontesPorPeriodo/);
   });
 
+  it("Conferência (ciclo): consulta pela data real dos registros, não pela fonte de importação", () => {
+    const fonte = ler("lib/services/controlesCaixa.ts");
+    const inicio = fonte.indexOf("export async function buscarConferenciaDoPeriodo");
+    const trecho = fonte.slice(inicio, fonte.indexOf("export async function buscarConferenciaDoIntervalo"));
+    expect(trecho).toMatch(/cicloDaData\(dataReferencia\)/);
+    expect(trecho).toMatch(/buscarConferenciaDoIntervalo\(db, ciclo\.inicio, fim\)/);
+    expect(trecho).not.toMatch(/fontePeriodoId|fontesPorPeriodo\./);
+  });
+
   it("os painéis consultam exatamente [início, fim] escolhidos", () => {
     for (const f of ["brindesPainel", "cancelamentoPainel", "compraDiretaPainel"]) {
       const fonte = ler(`lib/services/${f}.server.ts`);

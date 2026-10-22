@@ -1,11 +1,11 @@
-import { and, between, desc, eq, gte, inArray, lte } from "drizzle-orm";
-import type { CodigoUnidade } from "@painel/shared";
+import { and, between, desc, eq, inArray } from "drizzle-orm";
+import { UNIDADES, type CodigoUnidade } from "@painel/shared";
 import { calcularStatusConferencia, calcularPendente, type StatusConferencia } from "@/lib/rules/conferenciaStatus";
 import { semanaRealDoPeriodo } from "@/lib/rules/datas";
 import { cicloDaData } from "@/lib/import/periodoAbaQuebra";
 import { getDb } from "@/lib/db/client";
 import { contarSemMaquininha } from "@/lib/services/pdvEscopo";
-import { unidades, fechamentoCaixa, pdvMaquininha, troco, conferencia, quebraCaixa, fontesPorPeriodo } from "@/lib/db/schema";
+import { unidades, fechamentoCaixa, pdvMaquininha, troco, conferencia, quebraCaixa } from "@/lib/db/schema";
 
 /** Arredonda para 2 casas — evita ruído de ponto flutuante ao somar `numeric` do Postgres (já vem como string). */
 function arred(v: number): number {
@@ -96,6 +96,13 @@ export interface ConferenciaLinha {
   pendentes: number | null;
   /** Aditivo — todas as linhas (dia a dia) da unidade dentro do período resolvido, para a expansão da tela. */
   dias: ConferenciaDiaLinha[];
+  /**
+   * true = a filial pertence à rede mas NÃO tem nenhuma conferência registrada no período (dias vazios). `qtdCadastrados` e
+   * `respConferenciaConhecida` vêm do registro mais recente dessa filial no banco (o cadastro de caixas é constante por filial);
+   * nenhuma quantidade conferida é inventada.
+   */
+  semRegistroNoPeriodo?: boolean;
+  respConferenciaConhecida?: string | null;
 }
 
 export interface QuebraOperadorLinha {
@@ -142,12 +149,16 @@ export interface ControlesCaixaData {
     percentualConferidoRede: number | null;
     totalEmAtraso: number | null;
     linhas: ConferenciaLinha[];
-    /** Aditivo — resumo de rede e período resolvido (`fontesPorPeriodo`, ciclo real 16→15). */
+    /** Aditivo — resumo de rede e período consultado (ciclo real 16→15, pela data dos registros). */
     totalCaixasRede: number | null;
     totalConferidosRede: number | null;
     totalPendentesRede: number | null;
     periodoInicio: Date | null;
     periodoFim: Date | null;
+    /** Aditivo — Σ de "Qtd. caixas" (cadastro) das filiais da rede (equivale ao "TOTAL DE CAIXAS" da planilha); `null` se alguma filial não tem cadastro conhecido. */
+    totalCaixasCadastradasRede?: number | null;
+    /** Aditivo — filiais da rede sem nenhuma conferência registrada no período. */
+    lojasSemRegistro?: CodigoUnidade[];
   };
   quebraCaixa: {
     disponivel: boolean;
@@ -342,132 +353,25 @@ export async function buscarTrocoDoIntervalo(
 }
 
 /**
- * Conferência — resolve o PERÍODO (ciclo real 16→15) que contém
- * `dataReferencia` a partir de `fontesPorPeriodo` (tipoBase='conferencia'),
- * já gravado no import (mesmo conceito de `resolverAbaConferenciaPorData`
- * — aqui aplicado sobre o período já persistido, não reprocessando o
- * Excel). Sem esse período coberto, retorna `disponivel:false` — nenhum
- * dado inventado.
- *
- * Por loja: "Total"/"Conferidos"/status usam o snapshot do ÚLTIMO dia
- * com lançamento no período (mesma semântica já validada antes desta
- * etapa, que usava a semana mais recente — aqui só passou a olhar o
- * período/ciclo real inteiro em vez de uma semana). "Pendentes" usa
- * `calcularPendente` (já existia em conferenciaStatus.ts, nunca estava
- * ligada a nenhuma tela). "Atrasados" continua sendo a contagem de dias
- * com `em_atraso=true` dentro do período. Nenhum threshold/limiar novo
- * foi criado — status por dia e por loja usa exatamente
- * `calcularStatusConferencia`.
+ * Conferência — ciclo real 16→15 que contém `dataReferencia`. Os registros são consultados pela DATA REAL de cada um
+ * (`conferencia.data` dentro do ciclo), nunca pela "fonte" de importação: existem várias fontes (uma por nome de arquivo importado)
+ * para o mesmo ciclo e a maioria sem registros ligados — escolher uma delas fazia a tela mostrar "sem dados" mesmo com os registros
+ * no banco. Cada ciclo mostra só os seus dias (16 a 15 do mês seguinte); os ciclos históricos continuam intactos. Mesma agregação e
+ * mesmo status de `buscarConferenciaDoIntervalo` (`calcularStatusConferencia`/`calcularPendente`); "X" (em atraso) continua "X".
+ * Sem registros no ciclo: `disponivel:false` — nenhum dado inventado.
  */
 export async function buscarConferenciaDoPeriodo(
   db: ReturnType<typeof getDb>,
   dataReferencia: Date
 ): Promise<ControlesCaixaData["conferencia"]> {
-  const vazio: ControlesCaixaData["conferencia"] = {
-    disponivel: false,
-    percentualConferidoRede: null,
-    totalEmAtraso: null,
-    linhas: [],
-    totalCaixasRede: null,
-    totalConferidosRede: null,
-    totalPendentesRede: null,
-    periodoInicio: null,
-    periodoFim: null,
-  };
-
-  const [fontePeriodo] = await db
-    .select({ id: fontesPorPeriodo.id, periodoInicio: fontesPorPeriodo.periodoInicio, periodoFim: fontesPorPeriodo.periodoFim })
-    .from(fontesPorPeriodo)
-    .where(
-      and(
-        eq(fontesPorPeriodo.tipoBase, "conferencia"),
-        lte(fontesPorPeriodo.periodoInicio, dataReferencia),
-        gte(fontesPorPeriodo.periodoFim, dataReferencia)
-      )
-    )
-    .orderBy(desc(fontesPorPeriodo.periodoFim))
-    .limit(1);
-
-  if (!fontePeriodo) return vazio;
-
-  const confRows = await db
-    .select({
-      codigo: unidades.codigo,
-      data: conferencia.data,
-      qtdCadastrados: conferencia.qtdCadastrados,
-      qtdConferidos: conferencia.qtdConferidos,
-      emAtraso: conferencia.emAtraso,
-      respConferencia: conferencia.respConferencia,
-    })
-    .from(conferencia)
-    .innerJoin(unidades, eq(conferencia.unidadeId, unidades.id))
-    .where(eq(conferencia.fontePeriodoId, fontePeriodo.id))
-    .orderBy(desc(conferencia.data));
-
-  if (confRows.length === 0) return vazio;
-
-  const porLoja = new Map<string, (typeof confRows)[number][]>();
-  for (const r of confRows) {
-    const lista = porLoja.get(r.codigo) ?? [];
-    lista.push(r);
-    porLoja.set(r.codigo, lista);
-  }
-
-  const linhasConf: ConferenciaLinha[] = [...porLoja.entries()].map(([codigo, rows]) => {
-    const dias: ConferenciaDiaLinha[] = rows.map((r) => ({
-      data: r.data,
-      qtdCadastrados: r.qtdCadastrados,
-      qtdConferidos: r.qtdConferidos,
-      emAtraso: r.emAtraso,
-      respConferencia: r.respConferencia,
-      status: calcularStatusConferencia({
-        total: r.qtdCadastrados,
-        conferido: r.qtdConferidos ?? 0,
-        emAtrasoPelaRegraGlobal: r.emAtraso,
-        unidadeSemConferenciaNoFimDeSemana: false,
-        dataEhFimDeSemana: false,
-      }),
-    }));
-
-    const ultima = rows[0]; // já ordenado desc por data
-    const status = dias[0].status;
-    const pendentes = calcularPendente(ultima.qtdCadastrados, ultima.qtdConferidos ?? 0);
-
-    return {
-      unidade: codigo as CodigoUnidade,
-      ultimaDataConferida: ultima.data,
-      status,
-      percentualConferido: ultima.qtdCadastrados > 0 ? ((ultima.qtdConferidos ?? 0) / ultima.qtdCadastrados) * 100 : null,
-      atrasos: rows.filter((r) => r.emAtraso).length,
-      qtdCadastrados: ultima.qtdCadastrados,
-      qtdConferidos: ultima.qtdConferidos,
-      pendentes,
-      dias,
-    };
-  });
-
-  const mediaPercentual =
-    linhasConf.length > 0
-      ? linhasConf.reduce((s, l) => s + (l.percentualConferido ?? 0), 0) / linhasConf.length
-      : null;
-
-  return {
-    disponivel: linhasConf.length > 0,
-    percentualConferidoRede: mediaPercentual,
-    totalEmAtraso: linhasConf.reduce((s, l) => s + l.atrasos, 0),
-    linhas: linhasConf,
-    totalCaixasRede: linhasConf.reduce((s, l) => s + (l.qtdCadastrados ?? 0), 0),
-    totalConferidosRede: linhasConf.reduce((s, l) => s + (l.qtdConferidos ?? 0), 0),
-    totalPendentesRede: linhasConf.reduce((s, l) => s + (l.pendentes ?? 0), 0),
-    periodoInicio: new Date(fontePeriodo.periodoInicio),
-    periodoFim: new Date(fontePeriodo.periodoFim),
-  };
+  const ciclo = cicloDaData(dataReferencia);
+  const fim = new Date(Date.UTC(ciclo.fim.getUTCFullYear(), ciclo.fim.getUTCMonth(), ciclo.fim.getUTCDate()));
+  return buscarConferenciaDoIntervalo(db, ciclo.inicio, fim);
 }
 
 /**
  * Conferência por PERÍODO PERSONALIZADO (item 2 da etapa de revisão) —
- * bypassa a resolução de um único ciclo via `fontesPorPeriodo` e filtra
- * `conferencia.data` diretamente pelo intervalo escolhido (mais o filtro
+ * filtra `conferencia.data` diretamente pelo intervalo escolhido (mais o filtro
  * de loja opcional). Mesma agregação/status de `buscarConferenciaDoPeriodo`
  * (`calcularStatusConferencia`/`calcularPendente`, já validadas) —
  * nenhuma regra nova, só a origem do intervalo de datas.
@@ -560,16 +464,55 @@ export async function buscarConferenciaDoIntervalo(
   const mediaPercentual =
     linhasConf.length > 0 ? linhasConf.reduce((s, l) => s + (l.percentualConferido ?? 0), 0) / linhasConf.length : null;
 
+  // Filiais da rede SEM nenhuma conferência no período (sem filtro de loja): aparecem na tela com o cadastro de caixas conhecido
+  // (registro mais recente da filial) e dias vazios — nada de quantidade conferida inventada.
+  const lojasSemRegistro = unidadeFiltro ? [] : UNIDADES.filter((u) => !porLoja.has(u));
+  const semRegistro: ConferenciaLinha[] = [];
+  if (lojasSemRegistro.length > 0) {
+    const recentes = await db
+      .selectDistinctOn([conferencia.unidadeId], {
+        codigo: unidades.codigo,
+        qtdCadastrados: conferencia.qtdCadastrados,
+        respConferencia: conferencia.respConferencia,
+      })
+      .from(conferencia)
+      .innerJoin(unidades, eq(conferencia.unidadeId, unidades.id))
+      .where(inArray(unidades.codigo, lojasSemRegistro))
+      .orderBy(conferencia.unidadeId, desc(conferencia.data));
+    const porCodigo = new Map(recentes.map((r) => [r.codigo, r]));
+    for (const u of lojasSemRegistro) {
+      const r = porCodigo.get(u);
+      semRegistro.push({
+        unidade: u,
+        ultimaDataConferida: null,
+        status: null,
+        percentualConferido: null,
+        atrasos: 0,
+        qtdCadastrados: r ? r.qtdCadastrados : null,
+        qtdConferidos: null,
+        pendentes: null,
+        dias: [],
+        semRegistroNoPeriodo: true,
+        respConferenciaConhecida: r?.respConferencia ?? null,
+      });
+    }
+  }
+  const todasLinhas = [...linhasConf, ...semRegistro];
+  const cadastros = todasLinhas.map((l) => l.qtdCadastrados);
+  const totalCaixasCadastradasRede = unidadeFiltro || cadastros.some((c) => c === null) ? null : cadastros.reduce<number>((s, c) => s + (c ?? 0), 0);
+
   return {
     disponivel: linhasConf.length > 0,
     percentualConferidoRede: mediaPercentual,
     totalEmAtraso: linhasConf.reduce((s, l) => s + l.atrasos, 0),
-    linhas: linhasConf,
+    linhas: todasLinhas,
     totalCaixasRede: linhasConf.reduce((s, l) => s + (l.qtdCadastrados ?? 0), 0),
     totalConferidosRede: linhasConf.reduce((s, l) => s + (l.qtdConferidos ?? 0), 0),
     totalPendentesRede: linhasConf.reduce((s, l) => s + (l.pendentes ?? 0), 0),
     periodoInicio: dataInicio,
     periodoFim: dataFim,
+    totalCaixasCadastradasRede,
+    lojasSemRegistro,
   };
 }
 
@@ -851,10 +794,10 @@ export async function buscarControlesCaixa(dataReferencia: Date): Promise<Contro
   // --- Troco (semana correspondente à data de referência, `semanaRealDoPeriodo` já validada) ---
   const trocoData = await buscarTrocoDaSemana(db, dataReferencia);
 
-  // --- Conferência (ciclo real 16→15 correspondente à data de referência, via fontesPorPeriodo) ---
+  // --- Conferência (ciclo real 16→15 correspondente à data de referência, pela data real dos registros) ---
   const conferenciaData = await buscarConferenciaDoPeriodo(db, dataReferencia);
 
-  // --- Quebra de Caixa (ciclo real 16→15 correspondente à data de referência, via fontesPorPeriodo) ---
+  // --- Quebra de Caixa (ciclo real 16→15 correspondente à data de referência, pela data real dos lançamentos) ---
   const quebraCaixaData = await buscarQuebraCaixaDoPeriodo(db, dataReferencia);
 
   return {

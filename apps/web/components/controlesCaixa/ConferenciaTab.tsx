@@ -81,6 +81,7 @@ export function ConferenciaTab({ dados, unidade }: { dados: ControlesCaixaData["
   const pontosDeAtencao = gerencial.lojas.filter((l) => l.atrasadas > 0).slice(0, 5);
   const textoPercentual = (v: number | null) => (v === null ? "—" : `${formatadorPercentual.format(v)}%`);
   const { rede } = gerencial;
+  const semRegistro = linhasOrdenadas.filter((l) => l.semRegistroNoPeriodo);
 
   return (
     <div className="space-y-3">
@@ -89,12 +90,25 @@ export function ConferenciaTab({ dados, unidade }: { dados: ControlesCaixaData["
       </h2>
 
       {/* 1) Resumo do período selecionado */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <BigNumberCard titulo="Caixas previstos" valor={String(rede.previstas)} detalhe="Conferidos + em atraso" />
-        <BigNumberCard titulo="Caixas conferidos" valor={String(rede.conferidas)} />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {!unidade && (
+          <BigNumberCard
+            titulo="Caixas cadastradas"
+            valor={dados.totalCaixasCadastradasRede === null || dados.totalCaixasCadastradasRede === undefined ? "—" : String(dados.totalCaixasCadastradasRede)}
+            detalhe={`Soma de "Qtd. caixas" das ${linhasOrdenadas.length} filiais (= "TOTAL DE CAIXAS" da planilha). É o cadastro, não a soma diária.`}
+          />
+        )}
+        <BigNumberCard titulo="Caixas previstos" valor={String(rede.previstas)} detalhe="Soma dos dias lançados: conferidos + em atraso" />
+        <BigNumberCard titulo="Caixas conferidos" valor={String(rede.conferidas)} detalhe="Soma de todos os dias lançados no ciclo" />
         <BigNumberCard titulo="Caixas em atraso" valor={String(rede.atrasadas)} alerta={rede.atrasadas > 0} detalhe="Dias marcados com X × caixas cadastradas da loja" />
         <BigNumberCard titulo="Percentual de conferência" valor={textoPercentual(rede.percentual)} detalhe="Conferidos ÷ previstos" />
       </div>
+      {semRegistro.length > 0 && (
+        <p className="text-[11px] text-foreground/55">
+          Filiais sem conferência registrada neste ciclo: <strong>{semRegistro.map((l) => l.unidade).join(", ")}</strong>. Aparecem na matriz com o cadastro de caixas
+          conhecido e dias em branco (—); nenhuma quantidade foi inventada.
+        </p>
+      )}
       {gerencial.registrosMapoliFimDeSemana > 0 && (
         <p className="text-[11px] text-foreground/45">MAPOLI aos sábados e domingos não entra nos indicadores ({gerencial.registrosMapoliFimDeSemana} registros).</p>
       )}
@@ -145,13 +159,16 @@ export function ConferenciaTab({ dados, unidade }: { dados: ControlesCaixaData["
             ) : (
               linhasOrdenadas.map((linha) => {
                 const diaPorData = new Map(linha.dias.map((d) => [d.data.toISOString().slice(0, 10), d]));
-                const respMaisRecente = [...linha.dias].reverse().find((d) => d.respConferencia)?.respConferencia ?? "—";
+                const respMaisRecente = [...linha.dias].reverse().find((d) => d.respConferencia)?.respConferencia ?? linha.respConferenciaConhecida ?? "—";
                 return (
                   <tr key={linha.unidade} className="odd:bg-white even:bg-ragga-bg/30">
                     <td className="sticky left-0 z-10 border border-ragga-blue/5 bg-inherit px-2 py-1.5 font-medium text-ragga-blue-dark">
                       {respMaisRecente}
                     </td>
-                    <td className="border border-ragga-blue/5 px-2 py-1.5 font-medium text-ragga-blue-dark">{linha.unidade}</td>
+                    <td className="border border-ragga-blue/5 px-2 py-1.5 font-medium text-ragga-blue-dark">
+                      {linha.unidade}
+                      {linha.semRegistroNoPeriodo && <span className="ml-1 text-[10px] font-normal text-foreground/45">sem registro</span>}
+                    </td>
                     <td className="border border-ragga-blue/5 px-2 py-1.5 text-center">{linha.qtdCadastrados ?? "—"}</td>
                     {dias.map((dia) => (
                       <CelulaDia key={dia.toISOString()} dia={diaPorData.get(dia.toISOString().slice(0, 10))} />

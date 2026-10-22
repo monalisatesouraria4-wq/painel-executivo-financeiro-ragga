@@ -52,10 +52,14 @@ export function Sidebar({ mobileAberta, onFechar }: SidebarProps) {
           <div className="flex min-w-0 flex-col gap-1 overflow-hidden">
             {/* Logo oficial do manual da marca (Ragga Gestão, RGB/SVG). */}
             {recolhida ? (
-              <Image src="/ragga-gestao-icone.svg" alt="Ragga Gestão" width={30} height={30} className="shrink-0" priority />
+              <span className="logo-plaqueta !p-1.5">
+                <Image src="/ragga-gestao-icone.svg" alt="Ragga Gestão" width={24} height={24} style={{ width: 24, height: 24 }} className="shrink-0" priority />
+              </span>
             ) : (
               <>
-                <Image src="/ragga-gestao-horizontal.svg" alt="Ragga Gestão" width={150} height={27} className="shrink-0" priority />
+                <span className="logo-plaqueta self-start">
+                  <Image src="/ragga-gestao-horizontal.svg" alt="Ragga Gestão" width={140} height={25} style={{ width: 140, height: "auto" }} className="shrink-0" priority />
+                </span>
                 <p className="truncate text-[11px] font-medium uppercase tracking-wide text-foreground/50">Central de Caixa · Grupo Londrino</p>
               </>
             )}

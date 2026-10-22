@@ -1,24 +1,30 @@
 @import "tailwindcss";
 
 /*
- * Identidade visual Ragga — Painel Executivo Financeiro.
- * Cores conforme planejamento técnico aprovado (docs/regras-negocio.md).
+ * Identidade visual Ragga — Painel Executivo Financeiro (tema AZUL-MARINHO escuro).
+ * A marca é AZUL (arquivos oficiais em /public/brand: logo horizontal, ícone da folha e logo vertical). Fundo azul-marinho bem
+ * escuro, cartões em tons ligeiramente mais claros, texto claro e o azul da logo nos destaques. Os tokens abaixo são usados por
+ * todas as telas (classes bg-ragga-*, text-ragga-*, border-ragga-*), então o tema vale para o painel inteiro.
  */
 :root {
-  --background: #edf1f8;
-  --foreground: #1f2937;
-  --surface: #ffffff;
+  color-scheme: dark;
 
-  --ragga-blue: #2b4899;
-  --ragga-blue-dark: #1f3570;
-  --ragga-bg: #edf1f8;
-  --ragga-surface: #ffffff;
+  --background: #060d22; /* azul-marinho bem escuro */
+  --foreground: #e6edfb; /* texto claro */
+  --surface: #0e1b3b; /* cartões: ligeiramente mais claros que o fundo */
 
-  /* Semáforos objetivos (parametrizados no banco; tokens visuais fixos) */
-  --semaforo-azul: #2b7de9;
-  --semaforo-verde: #1f9d55;
-  --semaforo-amarelo: #d4a017;
-  --semaforo-vermelho: #c53030;
+  --ragga-logo-blue: #2b4899; /* azul exato da logo oficial (barras, folhas, destaques) */
+  --ragga-blue: #4b73d6; /* azul de destaque legível sobre o escuro (botões, links, bordas) */
+  --ragga-blue-dark: #1f3a8c; /* azul profundo (fundos escuros de botões/gradientes com texto branco) */
+  --texto-forte: #dbe6ff; /* texto forte (títulos e números financeiros): claro */
+  --ragga-bg: #0a1530; /* áreas internas sutis (cabeçalhos de tabela, chips) */
+  --ragga-surface: #0e1b3b;
+
+  /* Semáforos (mesma lógica; tons ajustados para ler bem no escuro) */
+  --semaforo-azul: #5aa2ff;
+  --semaforo-verde: #3ccf86;
+  --semaforo-amarelo: #e9b93c;
+  --semaforo-vermelho: #ff6b6b;
 }
 
 @theme inline {
@@ -26,6 +32,7 @@
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
 
+  --color-ragga-logo-blue: var(--ragga-logo-blue);
   --color-ragga-blue: var(--ragga-blue);
   --color-ragga-blue-dark: var(--ragga-blue-dark);
   --color-ragga-bg: var(--ragga-bg);
@@ -44,4 +51,102 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/*
+ * Cartões e painéis do código usam `bg-white` (tema claro original): no tema escuro viram a cor de cartão (azul-marinho um pouco
+ * mais claro que o fundo), levemente translúcidos para as folhas ao fundo aparecerem de leve. Controles nativos (data, lista)
+ * seguem o tema escuro por `color-scheme`.
+ */
+.bg-white,
+.odd\:bg-white:nth-child(odd),
+.hover\:bg-white:hover {
+  background-color: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+/* `text-ragga-blue-dark` era o "texto forte" do tema claro: no escuro vira o texto claro de destaque (o token continua azul profundo para fundos). */
+.text-ragga-blue-dark,
+.hover\:text-ragga-blue-dark:hover {
+  color: var(--texto-forte);
+}
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+::selection {
+  background: color-mix(in srgb, var(--ragga-blue) 55%, transparent);
+}
+
+/* Plaqueta clara para a logo oficial (azul) sobre fundo escuro — mantém o arquivo original, sem recolorir. */
+.logo-plaqueta {
+  background: #f4f7ff;
+  border-radius: 0.6rem;
+  padding: 0.4rem 0.65rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ───────────── Folhas decorativas flutuantes (ícone oficial, em azul) ─────────────
+ * Camada fixa ATRÁS do conteúdo, sem eventos de ponteiro (não atrapalha leitura nem cliques). Cada folha cai devagar e balança
+ * suavemente; só `transform`/`opacity` são animados (leve). Com "reduzir movimento" do sistema ligado, NÃO há animação: as folhas
+ * ficam paradas em posições fixas (alternativa estática).
+ */
+.folhas-fundo {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.folha {
+  position: absolute;
+  top: 0;
+  left: var(--x);
+  width: var(--tam);
+  aspect-ratio: 278 / 365;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: folha-cair var(--dur) linear var(--atraso) infinite;
+}
+.folha > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: url("/brand/ragga-icone-folha.png") center / contain no-repeat;
+  animation: folha-balancar var(--balanco) ease-in-out var(--atraso) infinite alternate;
+}
+@keyframes folha-cair {
+  0% {
+    transform: translate3d(0, -14vh, 0) rotate(var(--rot0));
+    opacity: 0;
+  }
+  8% {
+    opacity: var(--op);
+  }
+  90% {
+    opacity: var(--op);
+  }
+  100% {
+    transform: translate3d(var(--deriva), 114vh, 0) rotate(var(--rot1));
+    opacity: 0;
+  }
+}
+@keyframes folha-balancar {
+  from {
+    transform: translateX(-18px) rotate(-8deg);
+  }
+  to {
+    transform: translateX(18px) rotate(8deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .folha,
+  .folha > span {
+    animation: none;
+  }
+  .folha {
+    top: var(--y-fixo);
+    opacity: var(--op);
+    transform: rotate(var(--rot0));
+  }
 }
