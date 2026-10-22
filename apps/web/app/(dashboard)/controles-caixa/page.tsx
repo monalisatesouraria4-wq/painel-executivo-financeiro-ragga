@@ -20,7 +20,7 @@ export default async function ControlesCaixaPage() {
 
   return (
     <>
-      <Header titulo="Controles de Caixa" />
+      <Header titulo="Controles de Caixa" pergunta="Os caixas estão fechando certo, sem diferenças e dentro do prazo?" />
       {!dados.conectado && (
         <div className="mx-6 mt-6 rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
           Banco de dados ainda não conectado (<code>DATABASE_URL</code> não definida). Os

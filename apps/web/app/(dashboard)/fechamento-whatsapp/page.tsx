@@ -15,7 +15,7 @@ export default async function FechamentoWhatsappPage() {
   const dadosIniciais = await buscarFechamentoWhatsapp(formatadorDataBR.format(dataInicial), dataInicial);
   return (
     <>
-      <Header titulo="Fechamento WhatsApp" />
+      <Header titulo="Fechamento WhatsApp" pergunta="Qual foi o resultado do dia, pronto para enviar no WhatsApp?" />
       <FechamentoWhatsappView dadosIniciais={dadosIniciais} />
     </>
   );

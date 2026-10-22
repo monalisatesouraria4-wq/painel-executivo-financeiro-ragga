@@ -18,7 +18,7 @@ export default async function ComparativoPage() {
 
   return (
     <>
-      <Header titulo="Comparativo por Mês" subtitulo="Evolução mensal dos indicadores já conectados ao Supabase" />
+      <Header titulo="Comparativo por Mês" pergunta="Como os indicadores evoluíram de um mês para o outro?" subtitulo="Faturamento, Brindes, Cancelamentos, Compra Direta, Troco e Quebra de Caixa mês a mês, para toda a rede" />
       {!dados.conectado && (
         <div className="mx-6 mt-6 rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-4 py-3 text-sm text-ragga-blue-dark">
           Banco de dados ainda não conectado (<code>DATABASE_URL</code> não definida). O

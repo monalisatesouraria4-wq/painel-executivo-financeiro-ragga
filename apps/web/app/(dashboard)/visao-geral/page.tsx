@@ -33,7 +33,7 @@ export default async function VisaoGeralPage() {
 
   return (
     <>
-      <Header titulo="Visão Geral" subtitulo="Performance de caixa" />
+      <Header titulo="Visão Geral" pergunta="Como está o desempenho da rede no período e onde precisa de atenção?" subtitulo="Performance de caixa" />
       <VisaoGeralView dadosIniciais={dados} dataInicial={inicio} dataFimInicial={fim} desempenhoInicial={desempenho} />
     </>
   );

@@ -166,7 +166,8 @@ export function ComparativoMensalView({ dados }: { dados: ComparativoMensalData 
     <main className="flex flex-1 flex-col gap-6 px-6 py-6">
       {/* Filtro de período */}
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-ragga-blue-dark">Meses no comparativo</h2>
+        <h2 className="mb-1 text-sm font-semibold text-ragga-blue-dark">Quais meses comparar?</h2>
+        <p className="mb-2 text-xs text-foreground/60">Clique nos meses para incluir ou tirar do comparativo. Os cartões, a tabela e os gráficos abaixo seguem a sua seleção.</p>
         <div className="flex flex-wrap gap-2">
           {dados.meses.map((mes) => (
             <button
@@ -195,7 +196,8 @@ export function ComparativoMensalView({ dados }: { dados: ComparativoMensalData 
 
       {/* Tabela comparativa */}
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-ragga-blue-dark">Tabela comparativa</h2>
+        <h2 className="mb-1 text-sm font-semibold text-ragga-blue-dark">Tabela comparativa</h2>
+        <p className="mb-2 text-xs text-foreground/60">Cada linha é um indicador da rede inteira; cada coluna, um mês. “Sem dados” significa que a base não tem registro naquele mês (não é zero).</p>
         <Card className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
@@ -219,7 +221,10 @@ export function ComparativoMensalView({ dados }: { dados: ComparativoMensalData 
 
       {/* Gráficos de evolução */}
       <section className="space-y-6">
-        <h2 className="text-sm font-semibold text-ragga-blue-dark">Evolução mês a mês</h2>
+        <div>
+          <h2 className="text-sm font-semibold text-ragga-blue-dark">Evolução mês a mês</h2>
+          <p className="mt-1 text-xs text-foreground/60">Um gráfico por indicador. A seta compara o mês mais recente com o anterior, sem julgar se é bom ou ruim.</p>
+        </div>
         <div className="grid grid-cols-1 gap-6">
           <SecaoGrafico indicador={dados.faturamento} meses={mesesExibidos} tipo="moeda" />
           <SecaoGrafico indicador={dados.percentualBrindes} meses={mesesExibidos} tipo="percentual" />

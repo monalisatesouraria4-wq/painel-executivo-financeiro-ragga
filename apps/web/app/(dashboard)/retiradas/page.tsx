@@ -52,7 +52,7 @@ export default async function RetiradasPage({
 
   return (
     <>
-      <Header titulo="Retiradas" />
+      <Header titulo="Retiradas" pergunta="Quais pagamentos estão sendo feitos diretamente do caixa?" />
       <RetiradasTabs
         compraDiretaPainel={painel}
         periodoCompraDireta={{ inicio: iso(atual.inicio), fim: iso(atual.fim), compInicio: iso(comparacao.inicio), compFim: iso(comparacao.fim) }}

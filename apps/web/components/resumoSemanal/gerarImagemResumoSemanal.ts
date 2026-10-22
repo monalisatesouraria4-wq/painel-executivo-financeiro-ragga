@@ -17,8 +17,8 @@ const AZUL_ESCURO = "#dbe6ff"; // texto forte (títulos)
 const FUNDO = "#060d22"; // azul-marinho bem escuro
 const CARTAO = "#0e1b3b"; // cartões: um pouco mais claros que o fundo
 const CARTAO_INTERNO = "#0a1530";
-const TEXTO = "#e6edfb";
-const CINZA = "#8fa3cf";
+const TEXTO = "#f3f7ff";
+const CINZA = "#b8c7e8";
 const CINZA_CLARO = "#1f3262"; // bordas
 const VERDE = "#3ccf86";
 const VERMELHO = "#ff6b6b";
@@ -83,17 +83,17 @@ const COL_CARTOES = 3;
 const GAP = 16;
 const LARGURA_CONTEUDO = LARGURA - MARGEM * 2;
 const LARG_CARTAO = (LARGURA_CONTEUDO - GAP * (COL_CARTOES - 1)) / COL_CARTOES;
-const ALTURA_CARTAO = 132;
+const ALTURA_CARTAO = 152;
 const LARG_SECAO = (LARGURA_CONTEUDO - GAP) / 2;
 
 function alturaSecao(ctx: Ctx, s: SecaoImagem, largura: number): number {
-  const larguraTexto = largura - 32 - 130; // espaço do valor à direita
-  let h = 16 + 22 + 12; // padding topo + título + espaço
-  fonte(ctx, 14);
-  for (const l of s.linhas) h += quebrar(ctx, l.texto, l.valor ? larguraTexto : largura - 32).length * 20 + 4;
+  const larguraTexto = largura - 32 - 140; // espaço do valor à direita
+  let h = 16 + 26 + 14; // padding topo + título + espaço
+  fonte(ctx, 16);
+  for (const l of s.linhas) h += quebrar(ctx, l.texto, l.valor ? larguraTexto : largura - 32).length * 23 + 5;
   if (s.nota) {
-    fonte(ctx, 12, "400", true);
-    h += quebrar(ctx, s.nota, largura - 32).length * 17 + 6;
+    fonte(ctx, 14, "400", true);
+    h += quebrar(ctx, s.nota, largura - 32).length * 19 + 6;
   }
   return h + 14;
 }
@@ -112,35 +112,36 @@ function desenharSecao(ctx: Ctx, s: SecaoImagem, x: number, y: number, largura: 
   ctx.textBaseline = "alphabetic";
   ctx.textAlign = "left";
   ctx.fillStyle = AZUL_ESCURO;
-  fonte(ctx, 14, "800");
-  ctx.fillText(s.titulo.toUpperCase(), x + 28, y + 33);
+  fonte(ctx, 16, "800");
+  ctx.fillText(s.titulo.toUpperCase(), x + 28, y + 35);
   if (s.total) {
     ctx.textAlign = "right";
-    fonte(ctx, 16, "800");
-    ctx.fillStyle = "#f2f6ff";
-    ctx.fillText(s.total, x + largura - 16, y + 34);
+    fonte(ctx, 18, "800");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(s.total, x + largura - 16, y + 36);
   }
-  let cy = y + 16 + 22 + 12 + 8;
-  const larguraTexto = largura - 32 - 130;
+  let cy = y + 16 + 26 + 14 + 8;
+  const larguraTexto = largura - 32 - 140;
   for (const l of s.linhas) {
-    fonte(ctx, 14, l.destaque ? "700" : "400");
-    ctx.fillStyle = l.destaque ? "#8fb0ff" : TEXTO;
+    fonte(ctx, 16, l.destaque ? "700" : "600");
+    ctx.fillStyle = l.destaque ? "#a9c2ff" : TEXTO;
     ctx.textAlign = "left";
     const partes = quebrar(ctx, l.texto, l.valor ? larguraTexto : largura - 32);
-    partes.forEach((p, i) => ctx.fillText(p, x + 16, cy + i * 20));
+    partes.forEach((p, i) => ctx.fillText(p, x + 16, cy + i * 23));
     if (l.valor) {
       ctx.textAlign = "right";
-      fonte(ctx, 14, "700");
+      fonte(ctx, 16, "800");
+      ctx.fillStyle = "#ffffff";
       ctx.fillText(l.valor, x + largura - 16, cy);
     }
-    cy += partes.length * 20 + 4;
+    cy += partes.length * 23 + 5;
   }
   if (s.nota) {
-    fonte(ctx, 12, "400", true);
+    fonte(ctx, 14, "400", true);
     ctx.fillStyle = CINZA;
     ctx.textAlign = "left";
     const partes = quebrar(ctx, s.nota, largura - 32);
-    partes.forEach((p, i) => ctx.fillText(p, x + 16, cy + 6 + i * 17));
+    partes.forEach((p, i) => ctx.fillText(p, x + 16, cy + 6 + i * 19));
   }
 }
 
@@ -157,29 +158,29 @@ function desenharCartao(ctx: Ctx, c: CartaoImagem, x: number, y: number) {
   ctx.fill();
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  fonte(ctx, 12, "700");
+  fonte(ctx, 14, "700");
   ctx.fillStyle = CINZA;
   const rotulo = quebrar(ctx, c.rotulo.toUpperCase(), LARG_CARTAO - 40);
-  rotulo.forEach((l, i) => ctx.fillText(l, x + 22, y + 28 + i * 15));
-  const yValor = y + 28 + (rotulo.length - 1) * 15 + 42;
-  let tamanho = c.semDados ? 28 : 36;
+  rotulo.forEach((l, i) => ctx.fillText(l, x + 22, y + 30 + i * 17));
+  const yValor = y + 30 + (rotulo.length - 1) * 17 + 48;
+  let tamanho = c.semDados ? 32 : 42;
   fonte(ctx, tamanho, "800");
   while (ctx.measureText(c.valor).width > LARG_CARTAO - 40 && tamanho > 18) {
     tamanho -= 2;
     fonte(ctx, tamanho, "800");
   }
-  ctx.fillStyle = c.semDados ? "#5f719c" : "#f2f6ff";
+  ctx.fillStyle = c.semDados ? "#9aaed8" : "#ffffff";
   ctx.fillText(c.valor, x + 22, yValor);
   if (c.variacao) {
-    fonte(ctx, 14, "700");
+    fonte(ctx, 16, "700");
     ctx.fillStyle = COR_TOM[c.tom];
-    ctx.fillText(c.variacao, x + 22, yValor + 24);
+    ctx.fillText(c.variacao, x + 22, yValor + 28);
   }
   if (c.observacao) {
-    fonte(ctx, 11, "400");
+    fonte(ctx, 13, "400");
     ctx.fillStyle = CINZA;
     const partes = quebrar(ctx, c.observacao, LARG_CARTAO - 40);
-    partes.slice(0, 2).forEach((p, i) => ctx.fillText(p, x + 22, y + ALTURA_CARTAO - 12 - (Math.min(partes.length, 2) - 1 - i) * 13));
+    partes.slice(0, 2).forEach((p, i) => ctx.fillText(p, x + 22, y + ALTURA_CARTAO - 14 - (Math.min(partes.length, 2) - 1 - i) * 16));
   }
 }
 
@@ -195,9 +196,9 @@ export async function gerarImagemResumoSemanal(modelo: ModeloImagem, geradoEm: s
 
   const itensForma = modelo.formas;
   const linhasForma = Math.ceil(itensForma.length / 3);
-  fonte(medidor, 12, "400", true);
+  fonte(medidor, 14, "400", true);
   const linhasNotaFormas = modelo.notaFormas ? quebrar(medidor, modelo.notaFormas, LARGURA_CONTEUDO - 32).length : 0;
-  const alturaFormas = 16 + 22 + 14 + linhasForma * 56 + (linhasForma - 1) * 10 + (linhasNotaFormas ? linhasNotaFormas * 17 + 12 : 0) + 18;
+  const alturaFormas = 16 + 26 + 14 + linhasForma * 70 + (linhasForma - 1) * 10 + (linhasNotaFormas ? linhasNotaFormas * 19 + 12 : 0) + 18;
 
   // seções em duas colunas (preenche sempre a coluna mais curta, preservando a ordem de leitura)
   const colunas: { y: number; itens: { s: SecaoImagem; y: number; h: number }[] }[] = [{ y: 0, itens: [] }, { y: 0, itens: [] }];
@@ -209,12 +210,12 @@ export async function gerarImagemResumoSemanal(modelo: ModeloImagem, geradoEm: s
   }
   const alturaSecoes = Math.max(colunas[0].y, colunas[1].y) - GAP;
 
-  fonte(medidor, 12);
+  fonte(medidor, 14);
   const linhasAvisos = modelo.avisos.reduce((n, a) => n + quebrar(medidor, a, LARGURA_CONTEUDO - 32).length, 0);
-  const alturaAvisos = modelo.avisos.length ? 16 + linhasAvisos * 17 + (modelo.avisos.length - 1) * 4 + 16 : 0;
+  const alturaAvisos = modelo.avisos.length ? 16 + linhasAvisos * 19 + (modelo.avisos.length - 1) * 4 + 16 : 0;
 
   const ALTURA_CABECALHO = 98;
-  const ALTURA_FAIXA = 128;
+  const ALTURA_FAIXA = 140;
   const alturaTotal = Math.ceil(
     ALTURA_CABECALHO + ALTURA_FAIXA + 28 + alturaCartoes + 24 + alturaFormas + 24 + alturaSecoes + (alturaAvisos ? 24 + alturaAvisos : 0) + 28 + 56
   );
@@ -261,12 +262,12 @@ export async function gerarImagemResumoSemanal(modelo: ModeloImagem, geradoEm: s
   ctx.drawImage(logo, MARGEM + px, (ALTURA_CABECALHO - altLogo) / 2, largLogo, altLogo);
   ctx.textAlign = "right";
   ctx.textBaseline = "alphabetic";
-  fonte(ctx, 15, "700");
-  ctx.fillStyle = "#f2f6ff";
-  ctx.fillText(modelo.grupo.toUpperCase(), LARGURA - MARGEM, ALTURA_CABECALHO / 2 - 2);
-  fonte(ctx, 12, "400");
+  fonte(ctx, 18, "800");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(modelo.grupo.toUpperCase(), LARGURA - MARGEM, ALTURA_CABECALHO / 2 - 1);
+  fonte(ctx, 14, "600");
   ctx.fillStyle = CINZA;
-  ctx.fillText("Financeiro · Gestão", LARGURA - MARGEM, ALTURA_CABECALHO / 2 + 16);
+  ctx.fillText("Financeiro · Gestão", LARGURA - MARGEM, ALTURA_CABECALHO / 2 + 19);
 
   // faixa azul com título e período
   const grad = ctx.createLinearGradient(0, ALTURA_CABECALHO, LARGURA, ALTURA_CABECALHO + ALTURA_FAIXA);
@@ -276,13 +277,13 @@ export async function gerarImagemResumoSemanal(modelo: ModeloImagem, geradoEm: s
   ctx.fillRect(0, ALTURA_CABECALHO, LARGURA, ALTURA_FAIXA);
   ctx.textAlign = "left";
   ctx.fillStyle = "#ffffff";
-  fonte(ctx, 38, "800");
-  ctx.fillText(modelo.titulo, MARGEM, ALTURA_CABECALHO + 54);
-  fonte(ctx, 20, "700");
-  ctx.fillText(`📅 ${modelo.periodo} · ${modelo.grupo}`, MARGEM, ALTURA_CABECALHO + 88);
-  fonte(ctx, 14, "400");
-  ctx.fillStyle = "rgba(255,255,255,0.82)";
-  ctx.fillText(modelo.comparacao, MARGEM, ALTURA_CABECALHO + 112);
+  fonte(ctx, 42, "800");
+  ctx.fillText(modelo.titulo, MARGEM, ALTURA_CABECALHO + 58);
+  fonte(ctx, 23, "700");
+  ctx.fillText(`📅 ${modelo.periodo} · ${modelo.grupo}`, MARGEM, ALTURA_CABECALHO + 96);
+  fonte(ctx, 16, "600");
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.fillText(modelo.comparacao, MARGEM, ALTURA_CABECALHO + 124);
 
   // big numbers
   let y = ALTURA_CABECALHO + ALTURA_FAIXA + 28;
@@ -303,28 +304,28 @@ export async function gerarImagemResumoSemanal(modelo: ModeloImagem, geradoEm: s
   retanguloArredondado(ctx, MARGEM + 16, y + 18, 4, 18, 2);
   ctx.fill();
   ctx.textAlign = "left";
-  fonte(ctx, 14, "800");
+  fonte(ctx, 16, "800");
   ctx.fillStyle = AZUL_ESCURO;
-  ctx.fillText("FORMAS DE PAGAMENTO", MARGEM + 28, y + 33);
+  ctx.fillText("FORMAS DE PAGAMENTO", MARGEM + 28, y + 35);
   const larguraChip = (LARGURA_CONTEUDO - 32 - 2 * 10) / 3;
   itensForma.forEach((f, i) => {
     const cx = MARGEM + 16 + (i % 3) * (larguraChip + 10);
-    const cy = y + 16 + 22 + 14 + Math.floor(i / 3) * 66;
+    const cy = y + 16 + 26 + 14 + Math.floor(i / 3) * 80;
     ctx.fillStyle = CARTAO_INTERNO;
-    retanguloArredondado(ctx, cx, cy, larguraChip, 56, 10);
+    retanguloArredondado(ctx, cx, cy, larguraChip, 70, 10);
     ctx.fill();
     ctx.textAlign = "left";
-    fonte(ctx, 12, "700");
+    fonte(ctx, 14, "700");
     ctx.fillStyle = CINZA;
-    ctx.fillText(f.rotulo.toUpperCase(), cx + 14, cy + 22);
-    fonte(ctx, 20, "800");
-    ctx.fillStyle = f.semDados ? "#5f719c" : "#f2f6ff";
-    ctx.fillText(f.valor, cx + 14, cy + 46);
+    ctx.fillText(f.rotulo.toUpperCase(), cx + 14, cy + 25);
+    fonte(ctx, 26, "800");
+    ctx.fillStyle = f.semDados ? "#9aaed8" : "#ffffff";
+    ctx.fillText(f.valor, cx + 14, cy + 56);
   });
   if (modelo.notaFormas) {
-    fonte(ctx, 12, "400", true);
+    fonte(ctx, 14, "400", true);
     ctx.fillStyle = AMBAR;
-    quebrar(ctx, modelo.notaFormas, LARGURA_CONTEUDO - 32).forEach((l, i) => ctx.fillText(l, MARGEM + 16, y + alturaFormas - 18 - (linhasNotaFormas - 1 - i) * 17));
+    quebrar(ctx, modelo.notaFormas, LARGURA_CONTEUDO - 32).forEach((l, i) => ctx.fillText(l, MARGEM + 16, y + alturaFormas - 18 - (linhasNotaFormas - 1 - i) * 19));
   }
   y += alturaFormas + 24;
 
@@ -342,19 +343,19 @@ export async function gerarImagemResumoSemanal(modelo: ModeloImagem, geradoEm: s
     ctx.fill();
     ctx.strokeStyle = "#5c4a14";
     ctx.stroke();
-    fonte(ctx, 12);
+    fonte(ctx, 14);
     ctx.fillStyle = AMBAR;
-    let ay = y + 16 + 12;
-    for (const a of modelo.avisos) for (const l of quebrar(ctx, a, LARGURA_CONTEUDO - 32)) { ctx.fillText(l, MARGEM + 16, ay); ay += 17; }
+    let ay = y + 16 + 13;
+    for (const a of modelo.avisos) for (const l of quebrar(ctx, a, LARGURA_CONTEUDO - 32)) { ctx.fillText(l, MARGEM + 16, ay); ay += 19; }
     y += alturaAvisos;
   }
 
   // rodapé
   ctx.textAlign = "center";
-  fonte(ctx, 13, "700");
-  ctx.fillStyle = "#c9d8ff";
+  fonte(ctx, 15, "700");
+  ctx.fillStyle = "#dbe6ff";
   ctx.fillText("— Gestão Ragga · Financeiro", LARGURA / 2, alturaTotal - 38);
-  fonte(ctx, 11, "400");
+  fonte(ctx, 13, "400");
   ctx.fillStyle = CINZA;
   const quando = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(new Date(geradoEm));
   ctx.fillText(`Gerado em ${quando}`, LARGURA / 2, alturaTotal - 20);

@@ -15,7 +15,7 @@ export default async function FechamentoSemanalPage() {
   const dadosIniciais = await buscarFechamentoSemanal(inicio.toISOString().slice(0, 10), fim.toISOString().slice(0, 10));
   return (
     <>
-      <Header titulo="Fechamento Semanal" />
+      <Header titulo="Fechamento Semanal" pergunta="Como foi o fechamento da semana (segunda a domingo)?" />
       <FechamentoSemanalView dadosIniciais={dadosIniciais} />
     </>
   );
