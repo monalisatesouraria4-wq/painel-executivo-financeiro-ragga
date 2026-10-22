@@ -14,7 +14,7 @@
   --surface: #0e1b3b; /* cartões: ligeiramente mais claros que o fundo */
 
   --ragga-logo-blue: #2b4899; /* azul exato da logo oficial (barras, folhas, destaques) */
-  --ragga-blue: #4b73d6; /* azul de destaque legível sobre o escuro (botões, links, bordas) */
+  --ragga-blue: #3b63cb; /* azul de destaque (botões com texto branco ≥ 5:1, bordas) */
   --ragga-blue-dark: #1f3a8c; /* azul profundo (fundos escuros de botões/gradientes com texto branco) */
   --texto-forte: #dbe6ff; /* texto forte (títulos e números financeiros): claro */
   --ragga-bg: #0a1530; /* áreas internas sutis (cabeçalhos de tabela, chips) */
@@ -150,3 +150,93 @@ textarea {
     transform: rotate(var(--rot0));
   }
 }
+
+/* ═════════════════ Legibilidade e contraste (hierarquia visual no tema escuro) ═════════════════
+ * Só apresentação: nenhum cálculo, consulta ou regra muda. Os tamanhos pequenos sobem um pouco, o peso dos números e títulos
+ * aumenta, os números principais ficam BRANCOS e os textos secundários (cinza-azulado) ganham contraste. Cores semânticas
+ * (semáforos/alertas) não são tocadas. Declarado fora das camadas do Tailwind para prevalecer sobre as classes utilitárias.
+ */
+:root {
+  --numero: #ffffff; /* números principais (valores em R$, totais, quantidades, percentuais) */
+  --numero-suave: #f5f8ff; /* números de tabelas e apoio */
+  --titulo-secao: #d3e2ff; /* títulos de seção e rótulos em caixa-alta */
+  --texto-secundario: #c3d0ee; /* informação auxiliar importante */
+  --texto-apoio: #adbcdf; /* legendas e textos de apoio */
+  --texto-suave: #98a9d1; /* rótulos de baixa prioridade (ainda ≥ 4,5:1 sobre os cartões) */
+  --texto-discreto: #8597c4; /* detalhes/divisores com texto (≥ 4,5:1 sobre o fundo) */
+  --acento-texto: #8db0ff; /* azul de destaque para texto (links, aba ativa) */
+}
+
+body {
+  font-weight: 450;
+  letter-spacing: 0.003em;
+}
+
+/* Tamanhos: aumento moderado nos textos pequenos; títulos e números grandes sobem pouco. */
+.text-\[10px\] { font-size: 11.5px; }
+.text-\[11px\] { font-size: 12.5px; }
+.text-\[12px\] { font-size: 13px; }
+.text-\[13px\] { font-size: 14px; }
+.text-xs { font-size: 0.8125rem; }
+.text-sm { font-size: 0.9375rem; }
+.text-lg { font-size: 1.1875rem; }
+.text-xl { font-size: 1.3125rem; }
+.text-2xl { font-size: 1.6rem; }
+.text-3xl { font-size: 2rem; }
+
+/* Pesos: números e títulos mais firmes. */
+.font-medium { font-weight: 600; }
+.font-semibold { font-weight: 700; }
+.font-bold { font-weight: 800; }
+.font-extrabold { font-weight: 850; }
+
+/* Texto principal e títulos */
+.text-ragga-blue-dark,
+.hover\:text-ragga-blue-dark:hover { color: #eef3ff; }
+.uppercase.text-ragga-blue-dark,
+h2.text-ragga-blue-dark,
+h3.text-ragga-blue-dark { color: var(--titulo-secao); }
+h1,
+h1.text-ragga-blue-dark { color: #ffffff; }
+.text-ragga-blue,
+.hover\:text-ragga-blue:hover { color: var(--acento-texto); }
+
+/* NÚMEROS PRINCIPAIS em branco: cartões grandes (≥ text-xl) e qualquer número tabular, exceto semáforos/secundários. */
+[class*="text-xl"][class*="text-ragga-blue-dark"],
+[class*="text-2xl"][class*="text-ragga-blue-dark"],
+[class*="text-3xl"][class*="text-ragga-blue-dark"],
+[class*="text-xl"][class*="text-foreground"]:not([class*="text-foreground/"]),
+[class*="text-2xl"][class*="text-foreground"]:not([class*="text-foreground/"]),
+[class*="text-3xl"][class*="text-foreground"]:not([class*="text-foreground/"]) {
+  color: var(--numero);
+}
+.tabular-nums:not([class*="text-semaforo"]):not([class*="text-foreground/"]):not([class*="text-white"]) {
+  color: var(--numero-suave);
+}
+
+/* Cinzas: escala reforçada para informação secundária (contraste suficiente sobre cartões e fundo). */
+.text-foreground\/80, .text-foreground\/75, .text-foreground\/70, .text-foreground\/65 { color: var(--texto-secundario); }
+.text-foreground\/60, .text-foreground\/55 { color: var(--texto-secundario); }
+.text-foreground\/50, .text-foreground\/45 { color: var(--texto-apoio); }
+.text-foreground\/40, .text-foreground\/35 { color: var(--texto-suave); }
+.text-foreground\/30, .text-foreground\/20 { color: var(--texto-discreto); }
+
+/* Navegação lateral e abas: um pouco maiores e mais firmes. */
+aside nav a { font-size: 0.97rem; }
+
+/* Gráficos SVG (rótulos de eixos e valores): tamanhos em unidades do gráfico sobem moderadamente e os cinzas ficam legíveis. */
+svg text[font-size="8.5"] { font-size: 10.5px; }
+svg text[font-size="10"] { font-size: 11.5px; }
+svg text[font-size="11"] { font-size: 12.5px; }
+svg text[font-size="12"] { font-size: 13.5px; }
+svg text[font-size="13"] { font-size: 14.5px; }
+svg text[opacity="0.5"] { opacity: 0.85; }
+.fill-foreground\/45, .fill-foreground\/50, .fill-foreground\/55, .fill-foreground\/60 { fill: var(--texto-apoio); }
+.fill-foreground\/70, .fill-foreground\/80 { fill: var(--texto-secundario); }
+.fill-ragga-blue\/50, .fill-ragga-blue\/60 { fill: var(--acento-texto); }
+
+/* rótulos em azul translúcido: sempre legíveis no tema escuro */
+.text-ragga-blue\/45, .text-ragga-blue\/50, .text-ragga-blue\/55, .text-ragga-blue\/60 { color: var(--texto-apoio); }
+.text-ragga-blue\/70 { color: var(--acento-texto); }
+/* textos brancos translúcidos sobre faixas em gradiente azul */
+.text-white\/50, .text-white\/60, .text-white\/70 { color: rgba(255, 255, 255, 0.9); }

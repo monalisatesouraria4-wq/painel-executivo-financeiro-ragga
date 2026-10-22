@@ -21,7 +21,7 @@ export default async function ImportacaoPage() {
 
   return (
     <>
-      <Header titulo="Atualização de Bases" />
+      <Header titulo="Atualização de Bases" pergunta="As bases do painel estão atualizadas?" />
       <AtualizacaoBasesView statusInicial={statusInicial} />
     </>
   );

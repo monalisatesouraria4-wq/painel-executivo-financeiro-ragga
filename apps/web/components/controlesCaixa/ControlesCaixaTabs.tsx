@@ -10,6 +10,7 @@ import { buscarAberturaFechamentoPorData } from "@/lib/actions/buscarAberturaFec
 import { buscarAberturaFechamentoIntervalo } from "@/lib/actions/buscarAberturaFechamentoIntervalo";
 import { buscarConferenciaIntervalo } from "@/lib/actions/buscarConferenciaIntervalo";
 import { buscarQuebraCaixaIntervalo } from "@/lib/actions/buscarQuebraCaixaIntervalo";
+import { ExplicacaoAba } from "@/components/ui/ExplicacaoAba";
 import { FechamentoTab } from "./FechamentoTab";
 import { PdvMaquininhaTab } from "./PdvMaquininhaTab";
 import { TrocoTab } from "./TrocoTab";
@@ -46,6 +47,29 @@ const SUBABAS = [
 ] as const;
 
 type SubAba = (typeof SUBABAS)[number]["id"];
+
+const EXPLICACAO: Record<SubAba, { pergunta: string; texto: string }> = {
+  fechamento: {
+    pergunta: "Os caixas do dia foram fechados e conciliados no prazo?",
+    texto: "Mostra quantos caixas fecharam, quantos estão em aberto ou pendentes de conciliação e a diferença apurada, por loja.",
+  },
+  pdv: {
+    pergunta: "O que foi vendido no sistema (PDV) bate com o que passou na maquininha?",
+    texto: "Compara, por forma de pagamento, o valor lançado no PDV com o valor da maquininha. Diferença diferente de zero merece conferência.",
+  },
+  troco: {
+    pergunta: "Houve falta ou divergência de troco nos caixas?",
+    texto: "Mostra quantos caixas e lojas tiveram falta de troco na semana, o valor das faltas e o ranking por loja. Sobras são só informativas.",
+  },
+  conferencia: {
+    pergunta: "A contagem do dinheiro do caixa confere com o que o sistema registrou?",
+    texto: "Resultado da conferência dos caixas dentro do ciclo de 16 a 15, por loja.",
+  },
+  quebra: {
+    pergunta: "Quanto faltou ou sobrou nos caixas no ciclo?",
+    texto: "Quebra de Caixa é a diferença de caixa registrada por ocorrência. O ciclo vai do dia 16 ao dia 15; os valores aparecem por loja.",
+  },
+};
 
 export function ControlesCaixaTabs({
   dadosIniciais,
@@ -183,8 +207,8 @@ export function ControlesCaixaTabs({
 
       <p className="px-6 pt-2 text-xs text-foreground/50">
         {periodo
-          ? "Mostrando o período personalizado selecionado — cada sub-aba aplica sua própria regra de janela (semana real/ciclo/data exata; PDV × Maquininha usa o período literal) sobre as duas pontas do intervalo."
-          : "Mostrando a Data de referência — cada sub-aba aplica sua própria janela padrão (Fechamento = data exata; PDV × Maquininha = período literal; Troco = semana real; Conferência/Quebra = ciclo 16→15)."}
+          ? "Mostrando o período que você escolheu. Cada aba aplica a sua própria regra de janela (data exata, semana ou ciclo 16→15) às duas pontas do intervalo."
+          : "Mostrando a Data de referência. Cada aba usa a sua janela padrão: Fechamento = o dia; PDV × Maquininha = o período; Troco = a semana; Conferência e Quebra = o ciclo 16→15. Para analisar outro intervalo, preencha o Período."}
       </p>
 
       <div className="flex flex-wrap gap-1 border-b border-ragga-blue/10 px-6 pt-2">
@@ -205,6 +229,7 @@ export function ControlesCaixaTabs({
       </div>
 
       <div className="px-6 py-6">
+        <ExplicacaoAba pergunta={EXPLICACAO[subAtiva].pergunta}>{EXPLICACAO[subAtiva].texto}</ExplicacaoAba>
         {subAtiva === "fechamento" && (
           <FechamentoTab
             dados={fechamentoExibido}

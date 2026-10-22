@@ -49,7 +49,7 @@ export default async function IndicadoresPage({
 
   return (
     <>
-      <Header titulo="Indicadores" />
+      <Header titulo="Indicadores" pergunta="Onde estamos perdendo receita com brindes e cancelamentos?" />
       <IndicadoresTabs
         brindesPainel={brindesPainel}
         cancelamentoSalaoPainel={cancelamentoSalaoPainel}

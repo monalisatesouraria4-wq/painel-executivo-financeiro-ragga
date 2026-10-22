@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ExplicacaoAba } from "@/components/ui/ExplicacaoAba";
 import { BrindesPainel } from "./BrindesPainel";
 import { CancelamentoPainel } from "./CancelamentoPainel";
 import { FONTES_INDICADOR, type FonteIndicador } from "@/lib/services/indicadores";
@@ -8,6 +9,21 @@ import type { BrindesPainelData } from "@/lib/services/brindesPainel";
 import type { CancelamentoPainelData } from "@/lib/services/cancelamentoPainel";
 
 const FONTES_TELA_INDICADORES: FonteIndicador[] = ["brindes", "cancelamentoSalao", "cancelamentoDelivery"];
+
+const EXPLICACAO: Record<string, { pergunta: string; texto: string }> = {
+  brindes: {
+    pergunta: "Quanto foi dado como brinde e por qual motivo?",
+    texto: "Brindes são itens entregues sem cobrança. O percentual compara o valor dos brindes com o faturamento do mesmo período.",
+  },
+  cancelamentoSalao: {
+    pergunta: "Quais vendas do salão foram canceladas e por quê?",
+    texto: "Vendas lançadas e depois canceladas no salão. Os motivos mostram onde há mais oportunidade de reduzir perdas.",
+  },
+  cancelamentoDelivery: {
+    pergunta: "Quais pedidos de delivery foram cancelados e por quê?",
+    texto: "Pedidos de delivery lançados e depois cancelados. Compare com o período anterior para ver se a perda subiu ou caiu.",
+  },
+};
 
 /**
  * Sub-abas de Indicadores: Brindes / Cancelamento Salão / Cancelamento Delivery. As três são painéis
@@ -55,6 +71,7 @@ export function IndicadoresTabs({
       </div>
 
       <div className="px-6 py-6">
+        {EXPLICACAO[fonteAtiva] && <ExplicacaoAba pergunta={EXPLICACAO[fonteAtiva].pergunta}>{EXPLICACAO[fonteAtiva].texto}</ExplicacaoAba>}
         {fonteAtiva === "brindes" && <BrindesPainel dadosIniciais={brindesPainel} periodoInicial={periodoPadrao} lojaInicial={lojaInicial} />}
         {fonteAtiva === "cancelamentoSalao" && (
           <CancelamentoPainel

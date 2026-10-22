@@ -18,7 +18,7 @@ export default async function ResumoSemanalPage() {
   const [inicial, executivo] = await Promise.all([buscarResumoSemanal(atual, comparacao), buscarResumoExecutivo(atual)]);
   return (
     <>
-      <Header titulo="Resumo Semanal Executivo" subtitulo="Resumo da semana (segunda a domingo) com imagem e texto para WhatsApp, e comparativo com a semana anterior" />
+      <Header titulo="Resumo Semanal Executivo" pergunta="Como foi a semana da rede em relação à anterior?" subtitulo="Resumo da semana (segunda a domingo) com imagem e texto para WhatsApp, e comparativo com a semana anterior" />
       <div className="p-4 pb-0 sm:p-6 sm:pb-0">
         <ResumoExecutivoPainel hoje={hoje} ultimaSemana={atual} inicial={executivo} />
       </div>

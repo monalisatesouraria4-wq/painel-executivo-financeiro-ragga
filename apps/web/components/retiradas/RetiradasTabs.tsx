@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { CodigoUnidade } from "@painel/shared";
 import { RetiradaDepositoTab } from "./RetiradaDepositoTab";
 import { CompraDiretaPainel } from "./CompraDiretaPainel";
+import { ExplicacaoAba } from "@/components/ui/ExplicacaoAba";
 import { FiltroLojaPeriodo } from "@/components/ui/FiltroLojaPeriodo";
 import { paraInputDate, dataDoInput } from "@/components/ui/FiltroDataReferencia";
 import type { CompraDiretaPainelData } from "@/lib/services/compraDiretaPainel";
@@ -20,6 +21,17 @@ const SUBABAS = [
   { id: "deposito", nome: "Retirada para Depósito" },
   { id: "compradireta", nome: "Retirada Compra Direta" },
 ] as const;
+
+const EXPLICACAO: Record<"deposito" | "compradireta", { pergunta: string; texto: string }> = {
+  deposito: {
+    pergunta: "Quanto dinheiro saiu do caixa para ser depositado?",
+    texto: "Retiradas de dinheiro do caixa levadas ao depósito, por loja e por dia. Use os filtros de loja e período acima.",
+  },
+  compradireta: {
+    pergunta: "Quais compras foram pagas direto do caixa, e por quê?",
+    texto: "Compra Direta é o pagamento feito com dinheiro do caixa. Os cartões mostram o total, a variação contra o período comparado e o motivo de cada saída.",
+  },
+};
 
 type SubAba = (typeof SUBABAS)[number]["id"];
 
@@ -81,6 +93,7 @@ export function RetiradasTabs({
       </div>
 
       <div className="px-6 py-6">
+        <ExplicacaoAba pergunta={EXPLICACAO[subAtiva].pergunta}>{EXPLICACAO[subAtiva].texto}</ExplicacaoAba>
         {subAtiva === "deposito" && (
           <RetiradaDepositoTab periodoInicio={dataDoInput(dataInicio)} periodoFim={dataDoInput(dataFim)} unidade={unidadeFiltro} />
         )}
