@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { dataDMenos2 } from "@/lib/rules/datas";
 import { FORMAS_PDV_POWER_BI, TEXTO_COBERTURA_PDV, avisoComparacaoSemMaquininha, classesPontoDeAtencao, contarSemMaquininha, janelaConsultaPdv, OPCOES_ORDEM_RANKING_PDV, ordenarRankingPdv, periodoAnteriorPdv, posicaoPorValorPdv, textoSemMaquininha } from "@/lib/services/pdvEscopo";
 import { montarPdvGerencial } from "@/lib/services/pdvGerencial";
 import { agregarPdv, percentualDivergenciaPdv, recortarLojaPainel, redePdv, situacaoLoja, pdvPorForma } from "@/lib/services/controlesLojaPainel";
@@ -37,9 +36,6 @@ describe("período literal da aba PDV × Maquininha (sem D-2)", () => {
     const sel = { inicio: d("2026-09-28"), fim: d("2026-10-04") };
     const q = janelaConsultaPdv(sel);
     expect([iso(q.inicio), iso(q.fim)]).toEqual(["2026-09-28", "2026-10-04"]);
-    // o D-2 (que continua existindo para outras regras) daria 26/09 a 02/10 — a aba NÃO o usa
-    expect([iso(dataDMenos2(sel.inicio)), iso(dataDMenos2(sel.fim))]).toEqual(["2026-09-26", "2026-10-02"]);
-    expect(iso(q.inicio)).not.toBe(iso(dataDMenos2(sel.inicio)));
   });
 
   it("data de referência (dia único) também é literal e a entrada não é alterada", () => {

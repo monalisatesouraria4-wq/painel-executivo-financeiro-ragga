@@ -12,7 +12,7 @@ const FONTES_TELA_INDICADORES: FonteIndicador[] = ["brindes", "cancelamentoSalao
 /**
  * Sub-abas de Indicadores: Brindes / Cancelamento Salão / Cancelamento Delivery. As três são painéis
  * analíticos (`BrindesPainel`/`CancelamentoPainel`) com filtros próprios (período atual, período comparado e
- * loja), a regra D-1 de cada aba e os thresholds já existentes (`semaforos.ts`).
+ * loja), datas literais (sem D-1) e os thresholds já existentes (`semaforos.ts`).
  */
 export function IndicadoresTabs({
   brindesPainel,

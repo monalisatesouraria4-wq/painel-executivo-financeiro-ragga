@@ -1,6 +1,5 @@
 import { between, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { dataDMenos1 } from "@/lib/rules/datas";
 import { unidades, faturamento, compraDireta } from "@/lib/db/schema";
 import {
   montarPeriodoCompraDireta,
@@ -11,9 +10,8 @@ import type { BaseCobertura } from "./resumoSemanal";
 
 /**
  * Consulta real do painel de Compra Direta (Retiradas). Só importado por
- * Server Components/Server Actions. Mantém a janela D-1 da aba (mesma
- * `dataDMenos1` já usada por `buscarIndicadorPeriodo`): o período escolhido é
- * a REFERÊNCIA e a ocorrência consultada é [início−1, fim−1]. Duas consultas
+ * Server Components/Server Actions. Data LITERAL: o período escolhido é
+ * exatamente o consultado ([início, fim], inclusive), sem deslocamento D-1. Duas consultas
  * por período (faturamento loja × dia; compra direta loja × dia × motivo) —
  * o restante é agregação em memória (`montarPeriodoCompraDireta`).
  */
@@ -23,8 +21,8 @@ function iso(d: Date): string {
 }
 
 async function buscarPeriodo(db: ReturnType<typeof getDb>, referenciaInicio: Date, referenciaFim: Date): Promise<PeriodoCompraDireta> {
-  const inicioJanela = dataDMenos1(referenciaInicio);
-  const fimJanela = dataDMenos1(referenciaFim);
+  const inicioJanela = referenciaInicio; // data literal: sem deslocamento D-1
+  const fimJanela = referenciaFim;
 
   const [fatRows, cdRows] = await Promise.all([
     db
@@ -68,7 +66,7 @@ export async function buscarCompraDiretaPainel(
 ): Promise<CompraDiretaPainelData> {
   const conectado = Boolean(process.env.DATABASE_URL);
   if (!conectado) {
-    const vazio = montarPeriodoCompraDireta(iso(dataDMenos1(atualInicio)), iso(dataDMenos1(atualFim)), [], []);
+    const vazio = montarPeriodoCompraDireta(iso(atualInicio), iso(atualFim), [], []);
     return { conectado, cobertura: { min: null, max: null }, atual: vazio, comparacao: vazio };
   }
   const db = getDb();

@@ -1,4 +1,3 @@
-import { dataDMenos1, dataDMenos2 } from "@/lib/rules/datas";
 import { resumirConferenciaGerencial } from "@/lib/services/conferenciaGerencial";
 import type { FormaPagamentoBuckets } from "./fechamentoWhatsapp";
 
@@ -7,14 +6,9 @@ import type { FormaPagamentoBuckets } from "./fechamentoWhatsapp";
  * `computeSemanalReport`/`renderSemanal` do legado (linhas 4275-4557) —
  * auditoria funcional confirmada por código-fonte.
  *
- * Deslocamento de data por bloco (confirmado no legado, linhas
- * 4276-4338), desloca AS DUAS PONTAS do período selecionado:
- * - D-1 (`janelaD1`, reaproveita `dataDMenos1` já validada/testada em
- *   `lib/rules/datas.ts` — não duplicada aqui): Faturamento, Formas de
- *   Pagamento, Brindes, Cancelamento Delivery/Salão, Compra Direta.
- * - D-2 (`janelaD2`, reaproveita `dataDMenos2`): PDV × Maquininha.
- * - Data literal (sem deslocamento): Fechamento dos caixas, Quebra de
- *   Caixa, Troco — filtram exatamente `iniBase..fimBase`.
+ * REGRA ÚNICA DE DATAS: nenhum bloco desloca datas (sem D-1/D-2/D-3). Todos consultam exatamente `iniBase..fimBase`, inclusive:
+ * Faturamento, Formas de Pagamento, Brindes, Cancelamentos, Compra Direta, PDV × Maquininha, Fechamento dos caixas, Quebra de
+ * Caixa e Troco (semana real).
  * - Conferência: registros loja × dia de `iniBase..fimBase` (data literal,
  * semana selecionada — não o ciclo 16→15), agregados por
  * `resumirConferenciaGerencial` (previstas = conferidas + atraso; X = marcação
@@ -27,8 +21,8 @@ import type { FormaPagamentoBuckets } from "./fechamentoWhatsapp";
  * tela (confirmado, diferente do WhatsApp) — só "Gerar imagem".
  *
  * Sem DATABASE_URL: `disponivel: false`, `report: null` — nenhum valor
- * inventado. `normalizarPeriodo`/`janelaD1`/`janelaD2` são funções
- * puras, testáveis independente de conexão.
+ * inventado. `normalizarPeriodo` é função
+ * pura, testáveis independente de conexão.
  */
 
 // timeZone: "UTC" é obrigatório aqui — as datas de negócio são sempre
@@ -61,16 +55,6 @@ export function normalizarPeriodo(iniISO: string, fimISO: string): PeriodoNormal
 export interface Janela {
   inicio: Date;
   fim: Date;
-}
-
-/** D-1 aplicado às duas pontas do período (reaproveita `dataDMenos1`, legado linha 4281). */
-export function janelaD1(iniBase: Date, fimBase: Date): Janela {
-  return { inicio: dataDMenos1(iniBase), fim: dataDMenos1(fimBase) };
-}
-
-/** D-2 aplicado às duas pontas do período (reaproveita `dataDMenos2`, legado linha 4319). */
-export function janelaD2(iniBase: Date, fimBase: Date): Janela {
-  return { inicio: dataDMenos2(iniBase), fim: dataDMenos2(fimBase) };
 }
 
 export interface SemanalReportData {

@@ -36,5 +36,7 @@ export const CHAVES_POR_BASE: Record<TipoBase, readonly string[]> = {
     "usuario",
     "usuario_autorizador",
   ], // chaveRetirada — valor deliberadamente fora da chave
-  quebra_caixa: ["unidade_id", "data", "conferente", "operador", "cpf", "motivo"], // chaveQuebraConf — valor (quebra) fora da chave
+  // chaveQuebraConf + `ocorrencia` (migração 0004): o valor continua FORA da chave; `ocorrencia` distingue lançamentos legítimos
+  // repetidos (mesma chave natural) — ver lib/import/ocorrenciaQuebra.ts.
+  quebra_caixa: ["unidade_id", "data", "conferente", "operador", "cpf", "motivo", "ocorrencia"],
 };

@@ -318,6 +318,12 @@ export const quebraCaixa = pgTable(
     operador: text("operador").notNull().default(""),
     cpf: text("cpf").notNull().default(""),
     motivo: text("motivo").notNull().default(""),
+    /**
+     * Nº da ocorrência dentro do grupo de lançamentos com a MESMA chave natural (loja+data+conferente+operador+cpf+motivo) na
+     * planilha: posição por valor crescente (1, 2, 3…). Permite guardar separadamente lançamentos legítimos repetidos sem usar
+     * o número da linha (instável). Registros anteriores à migração 0004 valem 1.
+     */
+    ocorrencia: integer("ocorrencia").notNull().default(1),
     fontePeriodoId: uuid("fonte_periodo_id")
       .notNull()
       .references(() => fontesPorPeriodo.id),
@@ -329,7 +335,8 @@ export const quebraCaixa = pgTable(
       table.conferente,
       table.operador,
       table.cpf,
-      table.motivo
+      table.motivo,
+      table.ocorrencia
     ),
   ]
 );

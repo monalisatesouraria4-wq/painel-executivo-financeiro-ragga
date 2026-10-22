@@ -1,14 +1,12 @@
 import { between, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { dataDMenos1 } from "@/lib/rules/datas";
 import { unidades, faturamento, brindes } from "@/lib/db/schema";
 import { montarPeriodoBrindes, type BrindesPainelData, type PeriodoBrindes } from "./brindesPainel";
 import type { BaseCobertura } from "./resumoSemanal";
 
 /**
  * Consulta real do painel de Brindes (Indicadores). Só importado por Server Components/Server Actions. Mantém a
- * janela D-1 da aba (mesma `dataDMenos1` de `buscarIndicadorPeriodo`): o período escolhido é a REFERÊNCIA e a
- * ocorrência consultada é [início−1, fim−1]. Duas consultas por período (faturamento loja × dia; brindes loja ×
+ * data LITERAL: o período escolhido é exatamente o consultado ([início, fim], inclusive), sem deslocamento D-1. Duas consultas por período (faturamento loja × dia; brindes loja ×
  * dia × motivo × submotivo); a classificação controlável/não controlável e as agregações são feitas por
  * `montarPeriodoBrindes` reutilizando `classificarBrinde`.
  */
@@ -18,8 +16,8 @@ function iso(d: Date): string {
 }
 
 async function buscarPeriodo(db: ReturnType<typeof getDb>, referenciaInicio: Date, referenciaFim: Date): Promise<PeriodoBrindes> {
-  const inicioJanela = dataDMenos1(referenciaInicio);
-  const fimJanela = dataDMenos1(referenciaFim);
+  const inicioJanela = referenciaInicio; // data literal: sem deslocamento D-1
+  const fimJanela = referenciaFim;
 
   const [fatRows, brRows] = await Promise.all([
     db
@@ -59,7 +57,7 @@ async function buscarCobertura(db: ReturnType<typeof getDb>): Promise<BaseCobert
 export async function buscarBrindesPainel(atualInicio: Date, atualFim: Date, comparacaoInicio: Date, comparacaoFim: Date): Promise<BrindesPainelData> {
   const conectado = Boolean(process.env.DATABASE_URL);
   if (!conectado) {
-    const vazio = montarPeriodoBrindes(iso(dataDMenos1(atualInicio)), iso(dataDMenos1(atualFim)), [], []);
+    const vazio = montarPeriodoBrindes(iso(atualInicio), iso(atualFim), [], []);
     return { conectado, cobertura: { min: null, max: null }, atual: vazio, comparacao: vazio };
   }
   const db = getDb();

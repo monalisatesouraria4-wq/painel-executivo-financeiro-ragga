@@ -19,7 +19,7 @@ function criarClienteDb() {
   // Pool contido para ambiente serverless: poucas conexões por instância, ociosas fecham logo (evita reutilizar
   // conexão já derrubada pelo pooler) e a conexão inicial não fica pendurada.
   const client = postgres(connectionString, { prepare: false, max: 3, idle_timeout: 20, connect_timeout: 10 });
-  return drizzle(client, { schema });
+  return { db: drizzle(client, { schema }), client };
 }
 
 let dbSingleton: ReturnType<typeof criarClienteDb> | null = null;
@@ -28,5 +28,13 @@ export function getDb() {
   if (!dbSingleton) {
     dbSingleton = criarClienteDb();
   }
-  return dbSingleton;
+  return dbSingleton.db;
+}
+
+/** Cliente postgres.js do MESMO pool (usado pela sincronização autoritativa, que precisa de SQL com transação serializável). */
+export function getSql() {
+  if (!dbSingleton) {
+    dbSingleton = criarClienteDb();
+  }
+  return dbSingleton.client;
 }

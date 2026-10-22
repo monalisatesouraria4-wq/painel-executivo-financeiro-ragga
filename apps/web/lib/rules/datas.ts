@@ -1,24 +1,10 @@
 /**
  * Regras de data centralizadas (planejamento, "REGRAS DE DATA").
- * Nenhuma tela deve recalcular D-1/D-2/semana real localmente.
+ * REGRA ÚNICA: a data selecionada é a data consultada (sem D-1/D-2/D-3). Não existem funções de deslocamento de data.
  */
 
 function clonarData(data: Date): Date {
   return new Date(data.getTime());
-}
-
-/** Brindes, Cancelamentos, Compra Direta, Retirada Depósito: D-1. */
-export function dataDMenos1(dataReferencia: Date): Date {
-  const d = clonarData(dataReferencia);
-  d.setDate(d.getDate() - 1);
-  return d;
-}
-
-/** PDV × Maquininha, Conferência: D-2. */
-export function dataDMenos2(dataReferencia: Date): Date {
-  const d = clonarData(dataReferencia);
-  d.setDate(d.getDate() - 2);
-  return d;
 }
 
 /**

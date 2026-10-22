@@ -78,7 +78,7 @@ export function SecaoMotivosCancelamento({
   total: TotalCancelamento;
   comparavel: boolean;
   motivoSemComparacao: string | null;
-  /** Datas de OCORRÊNCIA (D-1 já aplicado) dos dois períodos. */
+  /** Datas literais (sem D-1) dos dois períodos. */
   periodoAtualTxt: string;
   periodoCompTxt: string;
   escopoTxt: string;
@@ -102,7 +102,7 @@ export function SecaoMotivosCancelamento({
       </p>
       <p className="mb-3 text-xs text-foreground/70">
         <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt} · <span className="font-semibold text-ragga-blue-dark">Comparado:</span> {periodoCompTxt}
-        <span className="text-foreground/45"> (datas de ocorrência)</span>
+        <span className="text-foreground/45"></span>
       </p>
       {!comparavel && (
         <p className="mb-3 rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-3 py-2 text-xs text-ragga-blue-dark">
@@ -254,7 +254,7 @@ export function SecaoInvestigarMotivo({
         <>
           <p className="mb-3 text-xs text-foreground/70">
             <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt} · <span className="font-semibold text-ragga-blue-dark">Comparado:</span> {periodoCompTxt}
-            <span className="text-foreground/45"> (datas de ocorrência)</span>
+            <span className="text-foreground/45"></span>
           </p>
           <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Motivo">
             {motivos.map((m) => (

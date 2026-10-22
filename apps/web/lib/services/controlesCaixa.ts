@@ -1,7 +1,8 @@
 import { and, between, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import type { CodigoUnidade } from "@painel/shared";
 import { calcularStatusConferencia, calcularPendente, type StatusConferencia } from "@/lib/rules/conferenciaStatus";
-import { dataDMenos1, dataDMenos2, semanaRealDoPeriodo } from "@/lib/rules/datas";
+import { semanaRealDoPeriodo } from "@/lib/rules/datas";
+import { cicloDaData } from "@/lib/import/periodoAbaQuebra";
 import { getDb } from "@/lib/db/client";
 import { contarSemMaquininha } from "@/lib/services/pdvEscopo";
 import { unidades, fechamentoCaixa, pdvMaquininha, troco, conferencia, quebraCaixa, fontesPorPeriodo } from "@/lib/db/schema";
@@ -26,7 +27,7 @@ function arred(v: number): number {
  * do schema/parser já validado.
  *
  * Janelas de data por bloco (reaproveitando `lib/rules/datas.ts`, sem
- * criar regra nova): Fechamento = D-1; PDV × Maquininha = D-2
+ * criar regra nova): Fechamento = data exata; PDV × Maquininha = data exata
  * (confirmado no legado); Troco = semana mais recente com dado
  * (`semanaRealDoPeriodo` aplicada sobre a data máxima da tabela);
  * Conferência = status da última linha por loja dentro dessa mesma
@@ -573,10 +574,9 @@ export async function buscarConferenciaDoIntervalo(
 }
 
 /**
- * Quebra de Caixa — mesmo mecanismo de `buscarConferenciaDoPeriodo`:
- * resolve o período (ciclo real 16→15) que contém `dataReferencia` via
- * `fontesPorPeriodo` (tipoBase='quebra_caixa'). Sem período coberto,
- * `disponivel:false` — nenhum dado inventado.
+ * Quebra de Caixa — ciclo real 16→15 que contém `dataReferencia`. Os lançamentos são filtrados pela DATA REAL de cada um
+ * (`quebra_caixa.data` dentro do ciclo), não pela aba/fonte de origem: um lançamento digitado na aba de outro ciclo continua
+ * aparecendo na sua própria data. Sem lançamentos no ciclo, `disponivel:false` — nenhum dado inventado.
  */
 export async function buscarQuebraCaixaDoPeriodo(
   db: ReturnType<typeof getDb>,
@@ -584,20 +584,8 @@ export async function buscarQuebraCaixaDoPeriodo(
 ): Promise<ControlesCaixaData["quebraCaixa"]> {
   const vazio: ControlesCaixaData["quebraCaixa"] = { disponivel: false, totalGeral: null, porOperador: [], detalhado: [] };
 
-  const [fontePeriodo] = await db
-    .select({ id: fontesPorPeriodo.id, periodoInicio: fontesPorPeriodo.periodoInicio, periodoFim: fontesPorPeriodo.periodoFim })
-    .from(fontesPorPeriodo)
-    .where(
-      and(
-        eq(fontesPorPeriodo.tipoBase, "quebra_caixa"),
-        lte(fontesPorPeriodo.periodoInicio, dataReferencia),
-        gte(fontesPorPeriodo.periodoFim, dataReferencia)
-      )
-    )
-    .orderBy(desc(fontesPorPeriodo.periodoFim))
-    .limit(1);
-
-  if (!fontePeriodo) return vazio;
+  const ciclo = cicloDaData(dataReferencia);
+  const fontePeriodo = { periodoInicio: ciclo.inicio, periodoFim: new Date(Date.UTC(ciclo.fim.getUTCFullYear(), ciclo.fim.getUTCMonth(), ciclo.fim.getUTCDate())) };
 
   const quebraRows = await db
     .select({
@@ -611,7 +599,7 @@ export async function buscarQuebraCaixaDoPeriodo(
     })
     .from(quebraCaixa)
     .innerJoin(unidades, eq(quebraCaixa.unidadeId, unidades.id))
-    .where(eq(quebraCaixa.fontePeriodoId, fontePeriodo.id))
+    .where(between(quebraCaixa.data, fontePeriodo.periodoInicio, fontePeriodo.periodoFim))
     .orderBy(desc(quebraCaixa.data));
 
   if (quebraRows.length === 0) return vazio;
@@ -721,7 +709,7 @@ export async function buscarQuebraCaixaDoIntervalo(
  * etapa de revisão). Mesma agregação/classificação de
  * `buscarControlesCaixa` (soma por loja, `diferenca = maquininha - pdv`),
  * só troca `eq(pdvMaquininha.data, d2)` pelo intervalo [inicio, fim]
- * escolhido pelo usuário. A consulta padrão (D-2) continua inalterada.
+ * escolhido pelo usuário. A consulta padrão usa a data exata selecionada.
  *
  * `formas` (opcional): restringe às formas de pagamento informadas (a aba PDV × Maquininha usa só as 4 da extração do
  * Power BI). Sem `formas` o comportamento é o de sempre (todas as formas). As datas chegam como o chamador as define:
@@ -788,8 +776,8 @@ export async function buscarControlesCaixa(dataReferencia: Date): Promise<Contro
 
   const db = getDb();
 
-  // --- Fechamento (D-1) ---
-  const d1 = dataDMenos1(dataReferencia);
+  // --- Fechamento (data exata selecionada, sem D-1) ---
+  const d1 = dataReferencia;
   const fechRows = await db
     .select({
       codigo: unidades.codigo,
@@ -824,8 +812,8 @@ export async function buscarControlesCaixa(dataReferencia: Date): Promise<Contro
     })),
   };
 
-  // --- PDV × Maquininha (D-2, confirmado no legado) ---
-  const d2 = dataDMenos2(dataReferencia);
+  // --- PDV × Maquininha (data exata selecionada, sem D-2) ---
+  const d2 = dataReferencia;
   const pdvRows = await db
     .select({
       codigo: unidades.codigo,

@@ -4,8 +4,10 @@ import { aplicarGravacao } from "@/lib/import/aplicarGravacao";
 import { simularGravacao } from "@/lib/import/simularGravacao";
 import { localizarColuna, localizarColunaExata } from "@/lib/import/localizarColuna";
 import { resolverAbaConferenciaPorData, type AbaConferenciaBruta } from "@/lib/import/resolverAbaConferencia";
-import { resolverAbaQuebraPorData, type AbaQuebraBruta } from "@/lib/import/resolverAbaQuebra";
+import { lerQuebraDaPlanilha } from "@/lib/import/quebraDaPlanilha";
 import { persistirBaseNoBanco } from "@/lib/actions/persistirBase";
+import { baseSnapshot } from "@/lib/import/basesSnapshot";
+import { resumirClasses } from "@/lib/import/classificarRejeicoes";
 import { persistirDetalhesCancelamentoSalao } from "@/lib/actions/persistirCancelamentoSalaoDetalhes";
 import { parseCancelamentoSalaoDetalhe, type ResultadoParseDetalhe } from "@/lib/import/parsers/cancelamentoSalaoDetalhe";
 import { parseFaturamento } from "@/lib/import/parsers/faturamento";
@@ -15,8 +17,6 @@ import { parseTroco } from "@/lib/import/parsers/troco";
 import { parseRetiradaDeposito } from "@/lib/import/parsers/retiradaDeposito";
 import { parseListaSimples, CONFIGS_LISTA_SIMPLES } from "@/lib/import/parsers/listaSimples";
 import { parseConferencia } from "@/lib/import/parsers/conferencia";
-import { parseQuebraCaixa } from "@/lib/import/parsers/quebraCaixa";
-import { parseDataCelula } from "@/lib/import/parseCelula";
 import type { ResultadoParse, RegistroBase } from "@/lib/import/tipos";
 
 /**
@@ -252,6 +252,13 @@ export type ResultadoImportacao =
       totalFinal: number;
       novoEstado: RegistroBase[];
       persistidoNoBanco: boolean;
+      /** Lote parseado para a simulação/confirmação da sincronização autoritativa (bases em `BASES_SNAPSHOT`). */
+      registrosSincronizacao?: RegistroBase[];
+      /** SHA-256 do arquivo (entra no hash do plano). */
+      arquivoSha256?: string;
+      /** Só Cancelamento Salão: detalhes individuais dos estornos, a gravar (em lotes) DEPOIS da sincronização confirmada. */
+      detalhesParaGravar?: import("@/lib/import/parsers/cancelamentoSalaoDetalhe").DetalheCancelamentoSalao[];
+      detalhesRejeitados?: number;
       /** Período (min/max data) encontrado NO ARQUIVO enviado — item 7 da etapa de revisão. */
       periodoArquivoInicio: Date;
       periodoArquivoFim: Date;
@@ -315,37 +322,21 @@ export async function processarArquivoBase(
   let detalhesCancelamentoSalao: ResultadoParseDetalhe | undefined;
 
   if (id === "quebraCaixa") {
-    const abasBrutas: AbaQuebraBruta[] = Object.entries(planilha.sheets).map(([nomeAba, linhas]) => {
-      const cabecalho = linhas[3] ?? []; // linha 4 (índice 3) — cabeçalho real das abas de Quebra
-      const idxData = localizarColuna(cabecalho, "DATA");
-      const idxLoja = localizarColuna(cabecalho, "LOJA");
-      const datasLancamentos: Date[] = [];
-      for (const linha of linhas.slice(4)) {
-        const loja = linha[idxLoja];
-        if (loja === null || loja === undefined || loja === "") continue;
-        const data = parseDataCelula(linha[idxData]);
-        if (data) datasLancamentos.push(data);
-      }
-      return { nomeAba, datasLancamentos };
-    });
-    const resolucao = resolverAbaQuebraPorData(dataReferencia, abasBrutas);
-    if (!resolucao.resultado.ok) {
+    // Cada lançamento vale pela SUA data real; o que não entra volta em `rejeitados` com motivo (nada é descartado em silêncio).
+    const quebra = lerQuebraDaPlanilha(planilha.sheets, dataReferencia);
+    if (!quebra.ok) {
       const motivo =
-        resolucao.resultado.erro === "NENHUMA_ABA_CORRESPONDE"
+        quebra.erro === "NENHUMA_ABA_CORRESPONDE"
           ? "Nenhuma aba do arquivo cobre a data de referência selecionada."
           : "Mais de uma aba do arquivo cobre a data de referência selecionada — período ambíguo.";
       return { status: "erro", mensagem: `Arquivo não aprovado. ${motivo}` };
     }
-    const abaEscolhida = resolucao.resultado.aba;
-    const linhasAba = planilha.sheets[abaEscolhida.nomeAba] ?? [];
-    const cabecalhoAba = linhasAba[3] ?? [];
-    const linhasDados = linhasAba.slice(4);
-    parseResult = parseQuebraCaixa(cabecalhoAba, linhasDados);
+    parseResult = quebra.parse;
     fonteQuebraCaixa = {
       arquivoNome: file.name,
-      nomeAba: abaEscolhida.nomeAba,
-      periodoInicio: abaEscolhida.periodoInicio,
-      periodoFim: abaEscolhida.periodoFim,
+      nomeAba: quebra.aba.nomeAba,
+      periodoInicio: quebra.aba.periodoInicio,
+      periodoFim: quebra.aba.periodoFim,
     };
   } else if (id === "conferencia") {
     const abasBrutas: AbaConferenciaBruta[] = Object.entries(planilha.sheets).map(([nomeAba, linhas]) => ({
@@ -396,6 +387,41 @@ export async function processarArquivoBase(
   const datasRegistros = parseResult.registros.map((r) => r.data.getTime());
   const periodoArquivoInicio = new Date(Math.min(...datasRegistros));
   const periodoArquivoFim = new Date(Math.max(...datasRegistros));
+
+  // Bases com SINCRONIZAÇÃO AUTORITATIVA: nunca gravam por aqui. Devolve a prévia (lote já validado pelo parser oficial) para a tela
+  // chamar a simulação no servidor (`previsualizarSincronizacaoBase`) e, só depois da confirmação explícita, gravar.
+  if (baseSnapshot(id)) {
+    const comDecisao = resumirClasses(id, parseResult.rejeitados.map((r) => ({ linhaOrigem: r.linhaOrigem, motivo: r.motivo, valoresBrutos: r.valoresBrutos }))).atencao;
+    if (comDecisao.length > 0) {
+      return {
+        status: "erro",
+        mensagem: `Arquivo não aprovado. Sincronização autoritativa bloqueada: ${comDecisao.length} linha(s) rejeitada(s) com dado real (ex.: linha ${comDecisao[0].linhaOrigem}: ${comDecisao[0].motivo}). Corrija a origem; nada será gravado.`,
+      };
+    }
+    const simulacao = simularGravacao(info.tipoBase, parseResult.registros, estadoAnterior);
+    let arquivoSha256: string | undefined;
+    try {
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      arquivoSha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch {
+      arquivoSha256 = undefined;
+    }
+    return {
+      status: "sucesso",
+      mensagem: "Prévia da fonte oficial pronta para revisão.",
+      inseridos: simulacao.inseridos,
+      atualizados: simulacao.atualizados,
+      totalFinal: simulacao.totalFinal,
+      novoEstado: aplicarGravacao(info.tipoBase, parseResult.registros, estadoAnterior),
+      persistidoNoBanco: false,
+      registrosSincronizacao: parseResult.registros,
+      arquivoSha256,
+      ...(detalhesCancelamentoSalao ? { detalhesParaGravar: detalhesCancelamentoSalao.registros, detalhesRejeitados: detalhesCancelamentoSalao.rejeitados.length } : {}),
+      periodoArquivoInicio,
+      periodoArquivoFim,
+      rejeitados: parseResult.rejeitados.length,
+    };
+  }
 
   // Lote inicial (Visão Geral) com persistência real no Postgres — ver
   // lib/db/persistencia.ts. A Server Action decide, DO LADO DO SERVIDOR,

@@ -10,8 +10,7 @@ import { periodoComparacaoPadrao, ultimoMesFechado } from "@/lib/rules/mesAnteri
  * Indicadores: sub-abas Brindes / Cancelamento Salão / Cancelamento Delivery — painéis analíticos
  * (`BrindesPainel`/`CancelamentoPainel`). Sem parâmetros abre no último mês calendário fechado comparado com o mês
  * anterior. Aceita `?fonte=&inicio=&fim=&loja=` como entrada de navegação (links da Visão Geral / Central de Caixa):
- * `fonte` escolhe a sub-aba; `inicio`/`fim` são a data de REFERÊNCIA (a regra D-1 de cada aba continua aplicada nos
- * serviços); `loja` pré-seleciona a loja. O período de comparação é o mês anterior (se o período for um mês completo)
+ * `fonte` escolhe a sub-aba; `inicio`/`fim` são o período LITERAL consultado (início e fim inclusive, sem D-1); `loja` pré-seleciona a loja. O período de comparação é o mês anterior (se o período for um mês completo)
  * ou o período imediatamente anterior de mesma duração — e pode ser trocado na tela. Parâmetros inválidos são ignorados.
  */
 export const dynamic = "force-dynamic";

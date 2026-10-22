@@ -53,7 +53,7 @@ export function SecaoMotivos({
   totalComparado: number | null;
   comparavel: boolean;
   motivoSemComparacao: string | null;
-  /** Datas de OCORRÊNCIA do período atual / comparado (já com a regra D-1 aplicada). */
+  /** Datas literais do período atual / comparado (sem D-1). */
   periodoAtualTxt: string;
   periodoCompTxt: string;
   escopoTxt: string;
@@ -76,7 +76,7 @@ export function SecaoMotivos({
       </p>
       <p className="mb-3 text-xs text-foreground/70">
         <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt} · <span className="font-semibold text-ragga-blue-dark">Comparado:</span> {periodoCompTxt}
-        <span className="text-foreground/45"> (datas de ocorrência)</span>
+        <span className="text-foreground/45"></span>
       </p>
       {!comparavel && (
         <p className="mb-3 rounded-lg border border-semaforo-amarelo/30 bg-semaforo-amarelo/10 px-3 py-2 text-xs text-ragga-blue-dark">
@@ -219,7 +219,7 @@ export function SecaoModalidade({
         <>
           <p className="mb-3 text-xs text-foreground/70">
             <span className="font-semibold text-ragga-blue-dark">Período atual:</span> {periodoAtualTxt} · <span className="font-semibold text-ragga-blue-dark">Comparado:</span> {periodoCompTxt}
-            <span className="text-foreground/45"> (datas de ocorrência)</span>
+            <span className="text-foreground/45"></span>
           </p>
           <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Modalidade">
             {modalidades.map((m) => (

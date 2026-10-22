@@ -1,6 +1,5 @@
 import { eq, sql } from "drizzle-orm";
 import type { CodigoUnidade } from "@painel/shared";
-import { dataDMenos1, dataDMenos2 } from "@/lib/rules/datas";
 import { getDb } from "@/lib/db/client";
 import { unidades, brindes, cancelamentoSalao, cancelamentoDelivery, compraDireta } from "@/lib/db/schema";
 import { buscarIndicador } from "@/lib/services/indicadores.server";
@@ -62,7 +61,7 @@ export async function buscarAnaliseGerencial(dataReferencia: Date): Promise<Anal
 
   if (!conectado) return vazio;
 
-  const dataAnteriorRef = dataDMenos1(dataReferencia); // desloca a janela D-1 mais um dia p/ trás
+  const dataAnteriorRef = subtrairDias(dataReferencia, 1); // dia calendário imediatamente anterior (comparação)
   const dataSemanaAnterior = subtrairDias(dataReferencia, 7);
 
   const [atualPorFonte, anteriorPorFonte, controlesAtual, controlesAnterior] = await Promise.all([
@@ -155,7 +154,7 @@ export async function buscarAnaliseGerencial(dataReferencia: Date): Promise<Anal
       delta !== null && anteriorValor !== null && anteriorValor !== 0 ? (delta / Math.abs(anteriorValor)) * 100 : null;
     evolucao.push({ indicador, atual: atualValor, anterior: anteriorValor, delta, deltaPercentual });
   }
-  pushEvolucao("Faturamento (base D-1)", atual.brindes.faturamentoPeriodo, anterior.brindes.faturamentoPeriodo);
+  pushEvolucao("Faturamento", atual.brindes.faturamentoPeriodo, anterior.brindes.faturamentoPeriodo);
   for (const { fonte, label } of FONTES) {
     pushEvolucao(label, atual[fonte].disponivel ? atual[fonte].totalIndicador : null, anterior[fonte].disponivel ? anterior[fonte].totalIndicador : null);
   }
@@ -229,8 +228,8 @@ export async function buscarAnaliseGerencial(dataReferencia: Date): Promise<Anal
   }
   // Janela real de cada indicador — usada tanto na consulta quanto no
   // `dataOcorrencia` de cada linha de Orientação (nunca uma data inventada).
-  const dataOcorrenciaD1 = dataDMenos1(dataReferencia);
-  const dataOcorrenciaD2 = dataDMenos2(dataReferencia);
+  const dataOcorrenciaD1 = dataReferencia; // data literal (sem D-1)
+  const dataOcorrenciaD2 = dataReferencia; // PDV: data literal (sem D-2)
 
   const quebrasPorLojaEMotivo = await Promise.all(FONTES.map((f) => buscarPorLojaEMotivo(f.fonte, dataOcorrenciaD1)));
   FONTES.forEach(({ fonte, label }, i) => {
@@ -295,7 +294,7 @@ export async function buscarAnaliseGerencial(dataReferencia: Date): Promise<Anal
     conectado,
     disponivel,
     dataReferencia,
-    dataAnteriorLabel: `D-1 de ${formatadorDataUTC.format(dataAnteriorRef)} (Troco/PDV: semana/D-2 de ${formatadorDataUTC.format(dataSemanaAnterior)})`,
+    dataAnteriorLabel: `dia ${formatadorDataUTC.format(dataAnteriorRef)} (Troco: semana de ${formatadorDataUTC.format(dataSemanaAnterior)})`,
     atencao,
     impacto,
     evolucao,

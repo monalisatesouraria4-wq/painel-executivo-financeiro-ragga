@@ -29,6 +29,13 @@
       "when": 1791988828335,
       "tag": "0003_cancelamento_salao_detalhe",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792504415760,
+      "tag": "0004_quebra_caixa_ocorrencia",
+      "breakpoints": true
     }
   ]
 }

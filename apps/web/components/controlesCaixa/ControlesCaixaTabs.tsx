@@ -25,15 +25,15 @@ import { QuebraCaixaTab } from "./QuebraCaixaTab";
  * - "Loja" é sempre aplicado, nas duas modalidades abaixo.
  * - Por padrão (sem período ativo), cada sub-aba continua usando
  *   EXATAMENTE sua janela já validada sobre a "Data de referência"
- *   (Fechamento = data exata; PDV × Maquininha = período literal, sem D-2; Troco = semana
+ *   (Fechamento = data exata; PDV × Maquininha = período literal; Troco = semana
  *   real; Conferência/Quebra = ciclo 16→15) — nada mudou aqui, e o
  *   filtro de loja é aplicado client-side, filtrando as linhas/detalhes
  *   já retornados (nenhuma consulta nova, nenhum total de rede alterado).
  * - Ao definir um "Período" (data inicial ≠ data final, ou o botão
  *   aplicado), as 5 sub-abas passam a usar as consultas *Intervalo
  *   (já existentes/adicionadas nesta etapa), que preservam a MESMA regra
- *   de deslocamento aplicada às duas pontas do intervalo (D-2 para PDV;
- *   semana real expandida para Troco; literal para Fechamento/Conferência/
+ *   de janela aplicada às duas pontas do intervalo (sem deslocamento de data;
+ *   semana real expandida para Troco; literal para PDV/Fechamento/Conferência/
  *   Quebra) — nenhuma regra de negócio foi alterada, só passou a aceitar
  *   um intervalo em vez de uma única referência.
  */
@@ -183,8 +183,8 @@ export function ControlesCaixaTabs({
 
       <p className="px-6 pt-2 text-xs text-foreground/50">
         {periodo
-          ? "Mostrando o período personalizado selecionado — cada sub-aba aplica sua própria regra de janela (semana real/ciclo/data exata; PDV × Maquininha usa o período literal, sem D-2) sobre as duas pontas do intervalo."
-          : "Mostrando a Data de referência — cada sub-aba aplica sua própria janela padrão (Fechamento = data exata; PDV × Maquininha = período literal, sem D-2; Troco = semana real; Conferência/Quebra = ciclo 16→15)."}
+          ? "Mostrando o período personalizado selecionado — cada sub-aba aplica sua própria regra de janela (semana real/ciclo/data exata; PDV × Maquininha usa o período literal) sobre as duas pontas do intervalo."
+          : "Mostrando a Data de referência — cada sub-aba aplica sua própria janela padrão (Fechamento = data exata; PDV × Maquininha = período literal; Troco = semana real; Conferência/Quebra = ciclo 16→15)."}
       </p>
 
       <div className="flex flex-wrap gap-1 border-b border-ragga-blue/10 px-6 pt-2">

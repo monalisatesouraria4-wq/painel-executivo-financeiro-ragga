@@ -342,7 +342,7 @@ export function CompraDiretaPainel({
   const inputCls = "rounded-md border border-ragga-blue/15 bg-white px-3 py-2 text-sm focus:border-ragga-blue focus:outline-none focus:ring-1 focus:ring-ragga-blue/40";
   const periodoAtualTxt = `${diaMesAno(inicio)} a ${diaMesAno(fim)}`;
   const periodoCompTxt = `${diaMesAno(compInicio)} a ${diaMesAno(compFim)}`;
-  // Datas de OCORRÊNCIA (D-1) — as que de fato foram somadas; usadas nas seções novas para não confundir com a referência.
+  // Datas literais do período — as mesmas somadas e exibidas no filtro.
   const ocorrAtualTxt = `${diaMesAno(dados.atual.inicioOcorrencia)} a ${diaMesAno(dados.atual.fimOcorrencia)}`;
   const ocorrCompTxt = `${diaMesAno(dados.comparacao.inicioOcorrencia)} a ${diaMesAno(dados.comparacao.fimOcorrencia)}`;
   const blocoStatus =
@@ -401,7 +401,7 @@ export function CompraDiretaPainel({
         {pendente && <span className="pb-2 text-xs text-foreground/50">Carregando...</span>}
       </div>
       <p className="-mt-3 px-1 text-[11px] text-foreground/45">
-        Regra D-1 da aba: ocorrências de {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
+        Período consultado (datas literais, inclusive): {diaMesAno(dados.atual.inicioOcorrencia)} a {diaMesAno(dados.atual.fimOcorrencia)} (comparado:{" "}
         {diaMesAno(dados.comparacao.inicioOcorrencia)} a {diaMesAno(dados.comparacao.fimOcorrencia)}).
       </p>
 
@@ -666,7 +666,7 @@ export function CompraDiretaPainel({
           </table>
         </div>
         <p className="mt-3 text-[11px] text-foreground/40">
-          Comparado: {ocorrCompTxt} (datas de ocorrência). Variação só aparece com a base e o faturamento completos da loja nos dois períodos. Loja com faturamento em menos dias que o período fica sem % e sem status (valores em R$ mantidos).
+          Comparado: {ocorrCompTxt}. Variação só aparece com a base e o faturamento completos da loja nos dois períodos. Loja com faturamento em menos dias que o período fica sem % e sem status (valores em R$ mantidos).
         </p>
       </Secao>
 

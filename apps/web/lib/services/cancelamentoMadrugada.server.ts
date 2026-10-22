@@ -5,7 +5,8 @@ import type { EstornoMadrugada } from "@/lib/rules/cancelamentoMadrugada";
 
 /**
  * Consulta do alerta "Cancelamentos após 00h30" (Cancelamento Salão): estornos individuais da janela 00h31–05h59 cuja
- * DATA OPERACIONAL (dia anterior ao calendário) está na janela de ocorrência da aba (a mesma D-1 dos demais cards).
+ * DATA OFICIAL DO REGISTRO (data do estorno na planilha = `data_calendario`, a mesma do agregado dos demais cards) está no período
+ * selecionado. A data operacional (dia anterior) continua sendo CLASSIFICAÇÃO exibida no detalhe, nunca critério do filtro.
  * Somente leitura; tabela adicional `cancelamento_salao_detalhe` (o agregado não é usado nem alterado aqui).
  */
 export interface MadrugadaDados {
@@ -26,7 +27,7 @@ export async function buscarCancelamentosMadrugada(inicioOcorrencia: string, fim
     .from(tab);
   if (!cob || cob.n === 0 || !cob.desde || !cob.ate) return { conectado: true, detalhesDisponiveis: false, cobertura: null, linhas: [] };
 
-  const filtros = [eq(tab.madrugada, true), between(tab.dataOperacional, inicioOcorrencia, fimOcorrencia)];
+  const filtros = [eq(tab.madrugada, true), between(tab.dataCalendario, inicioOcorrencia, fimOcorrencia)];
   if (loja && loja !== "TODAS") filtros.push(eq(unidades.codigo, loja));
   const rows = await db
     .select({
