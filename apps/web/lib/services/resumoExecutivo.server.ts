@@ -85,8 +85,9 @@ async function dadosDoPeriodo(db: ReturnType<typeof getDb>, j: JanelaSemana): Pr
       .where(between(retiradaDeposito.data, ini, fim))
       .groupBy(unidades.codigo),
     db
-      .select({ diferenca: troco.diferenca, conferido: troco.trocoConferidoGerente, informado: troco.trocoInformadoColaborador })
+      .select({ unidade: unidades.codigo, caixa: troco.caixa, data: sql<string>`${troco.data}::text`, diferenca: troco.diferenca, conferido: troco.trocoConferidoGerente, informado: troco.trocoInformadoColaborador })
       .from(troco)
+      .innerJoin(unidades, eq(troco.unidadeId, unidades.id))
       .where(between(troco.data, ini, fim)),
     db
       .select({ data: sql<string>`${quebraCaixa.data}::text`, motivo: quebraCaixa.motivo, valor: quebraCaixa.valor })
@@ -103,7 +104,7 @@ async function dadosDoPeriodo(db: ReturnType<typeof getDb>, j: JanelaSemana): Pr
     cancelamentoDelivery: mot(delivery),
     compraDireta: mot(cd),
     retiradaDeposito: ret.map((r) => ({ unidade: r.codigo, valor: Number(r.total) })),
-    troco: tr.map((r) => ({ diferenca: Number(r.diferenca), conferido: Number(r.conferido), informado: Number(r.informado) })),
+    troco: tr.map((r) => ({ unidade: r.unidade, caixa: r.caixa, data: r.data, diferenca: Number(r.diferenca), conferido: Number(r.conferido), informado: Number(r.informado) })),
     quebra: qb.map((r) => ({ data: r.data, motivo: r.motivo, valor: Number(r.valor) })),
   };
 }

@@ -1,5 +1,6 @@
 import { agregarEmBuckets } from "@/lib/rules/formasPagamento";
 import { resumirTroco } from "@/lib/services/trocoIndicadores";
+import { somarTrocoNosCaixas } from "@/lib/services/trocoSemanal";
 import { cicloDaData } from "@/lib/import/periodoAbaQuebra";
 import type { FormaPagamentoBuckets } from "@/lib/services/fechamentoWhatsapp";
 
@@ -24,7 +25,8 @@ export type BaseId = "faturamento" | "formas" | "brindes" | "cancelamentoSalao" 
 export interface CoberturaBase { min: string | null; max: string | null }
 
 export interface LinhaMotivo { motivo: string; valor: number }
-export interface LinhaTroco { diferenca: number; conferido: number; informado: number }
+/** `unidade`, `caixa` e `data` (opcionais) identificam o caixa: o mesmo caixa nunca é somado duas vezes no "Troco nos Caixas". */
+export interface LinhaTroco { diferenca: number; conferido: number; informado: number; unidade?: string; caixa?: string; data?: string }
 export interface LinhaQuebra { data: string; motivo: string; valor: number }
 export interface LinhaRetirada { unidade: string; valor: number }
 
@@ -73,7 +75,8 @@ export interface Total {
   anterior: Campo;
   variacao: Variacao | null;
   /** Faturamento: maior é melhor; os demais (custos/perdas): menor é melhor. */
-  melhorQuando: "maior" | "menor";
+  /** "neutro": a variação é mostrada sem julgar se é boa ou ruim (ex.: montante de troco nos caixas). */
+  melhorQuando: "maior" | "menor" | "neutro";
   /** Texto auxiliar curto (ex.: "Nota Fiscal fora do total"). */
   observacao?: string;
 }
@@ -100,6 +103,10 @@ export interface DetalheTroco {
   faltas: { quantidade: number; valor: number };
   sobras: { quantidade: number; valor: number };
   semConferencia: number;
+  /** Troco nos Caixas: Σ "Conferido pelo gerente" (um registro por caixa; fora os 0/0). */
+  trocoNosCaixas: number | null;
+  /** Caixas incluídos nesse total. */
+  caixasNoTotal: number;
 }
 export interface CicloQuebra { rotulo: string; inicio: string; fim: string; valor: number; quantidade: number }
 export interface DetalheQuebra { total: Campo; quantidade: number; porMotivo: LinhaMotivo[]; porCiclo: CicloQuebra[] }
@@ -152,11 +159,12 @@ function campo(valor: number, base: BaseId, bases: Record<BaseId, CoberturaBase>
   };
 }
 
-export function variacaoDe(atual: number | null, anterior: number | null, melhorQuando: "maior" | "menor"): Variacao | null {
+export function variacaoDe(atual: number | null, anterior: number | null, melhorQuando: "maior" | "menor" | "neutro"): Variacao | null {
   if (atual === null || anterior === null) return null;
   const reais = arred(atual - anterior);
   const percentual = anterior !== 0 ? Math.round(((atual - anterior) / Math.abs(anterior)) * 10000) / 100 : null;
   if (Math.abs(reais) < 0.005) return { reais: 0, percentual: percentual === null ? null : 0, situacao: "estavel" };
+  if (melhorQuando === "neutro") return { reais, percentual, situacao: "estavel" };
   const subiu = reais > 0;
   const bom = melhorQuando === "maior" ? subiu : !subiu;
   return { reais, percentual, situacao: bom ? "melhorou" : "piorou" };
@@ -208,14 +216,21 @@ export function montarResumoExecutivo(e: EntradaResumoExecutivo): ResumoExecutiv
     cancelamentoDelivery: somar(d.cancelamentoDelivery),
     compraDireta: somar(d.compraDireta.filter((l) => !ehNotaFiscal(l.motivo))),
     retiradaDeposito: somar(d.retiradaDeposito),
-    troco: resumirTroco(d.troco.map((t) => ({ ...t, planoDeAcao: null }))).faltas.valor,
+    troco: somarTrocoNosCaixas(d.troco).total, // "Troco nos Caixas": Σ conferido pelo gerente (faltas e sobras ficam separadas, no detalhe)
     quebra: somar(d.quebra),
   });
   const [valAtual, valAnterior] = [brutosPorBase(e.dadosAtual), brutosPorBase(e.dadosAnterior)];
 
-  const c = (base: BaseId, p: 0 | 1): Campo => campo((p === 0 ? valAtual : valAnterior)[base], base, bases, periodos[p][0]);
+  /**
+   * Troco é uma conferência SEMANAL: a base pode ter só parte da semana (ex.: conferência registrada na quarta, 14/10). A semana tem dado
+   * quando existe ao menos um caixa conferido dentro dela — a mesma condição da aba Controles de Caixa → Troco. Não se exige que a base
+   * cubra a semana inteira (a regra de cobertura total vale para as demais bases).
+   */
+  const trocoTemDados = (p: 0 | 1) => (p === 0 ? e.dadosAtual : e.dadosAnterior).troco.length > 0;
+  const c = (base: BaseId, p: 0 | 1): Campo =>
+    base === "troco" && trocoTemDados(p) ? { valor: arred((p === 0 ? valAtual : valAnterior).troco), status: "ok" } : campo((p === 0 ? valAtual : valAnterior)[base], base, bases, periodos[p][0]);
 
-  const total = (id: TotalId, rotulo: string, a: Campo, b: Campo, melhorQuando: "maior" | "menor", observacao?: string): Total => ({
+  const total = (id: TotalId, rotulo: string, a: Campo, b: Campo, melhorQuando: "maior" | "menor" | "neutro", observacao?: string): Total => ({
     id,
     rotulo,
     atual: a,
@@ -238,7 +253,7 @@ export function montarResumoExecutivo(e: EntradaResumoExecutivo): ResumoExecutiv
     total("cancelamentos", "Total de cancelamentos", soma2(salaoA, deliveryA), soma2(salaoB, deliveryB), "menor", "Salão + Delivery"),
     total("compraDireta", "Retirada de Compra Direta", c("compraDireta", 0), c("compraDireta", 1), "menor", "Sem Nota Fiscal (ajuste sem saída de caixa)"),
     total("retiradaDeposito", "Retirada Depósito", c("retiradaDeposito", 0), c("retiradaDeposito", 1), "menor"),
-    total("troco", "Troco (faltas)", c("troco", 0), c("troco", 1), "menor", "Soma das faltas de troco conferidas"),
+    total("troco", "Troco nos Caixas", c("troco", 0), c("troco", 1), "neutro", "Soma do troco conferido pelo gerente nos caixas (não é falta nem sobra)"),
     total("quebra", "Quebra de Caixa", c("quebra", 0), c("quebra", 1), "menor"),
   ];
 
@@ -273,11 +288,15 @@ export function montarResumoExecutivo(e: EntradaResumoExecutivo): ResumoExecutiv
   };
 
   // troco: grupos consolidados pela regra do sistema (conferido / divergência / sem valor de conferência; faltas e sobras)
-  const trocoOk = coberturaCompleta(bases.troco, e.atual);
+  const trocoOk = trocoTemDados(0);
+  const trocoParcial = trocoOk && !coberturaCompleta(bases.troco, e.atual);
+  const notaTrocoParcial = trocoParcial && bases.troco.max ? `Troco: a base cobre até ${dataBR(bases.troco.max)}; o total considera só os registros disponíveis da semana` : undefined;
   const rt = resumirTroco(d.troco.map((t) => ({ ...t, planoDeAcao: null })));
+  const trocoCx = somarTrocoNosCaixas(d.troco);
   const troco: DetalheTroco = trocoOk
     ? {
         disponivel: true,
+        ...(notaTrocoParcial ? { nota: notaTrocoParcial } : {}),
         informado: arred(d.troco.reduce((s, t) => s + t.informado, 0)),
         conferido: arred(d.troco.reduce((s, t) => s + t.conferido, 0)),
         caixas: rt.total,
@@ -286,6 +305,8 @@ export function montarResumoExecutivo(e: EntradaResumoExecutivo): ResumoExecutiv
         faltas: rt.faltas,
         sobras: rt.sobras,
         semConferencia: rt.semValor,
+        trocoNosCaixas: trocoCx.total,
+        caixasNoTotal: trocoCx.caixas,
       }
     : {
         disponivel: false,
@@ -298,6 +319,8 @@ export function montarResumoExecutivo(e: EntradaResumoExecutivo): ResumoExecutiv
         faltas: { quantidade: 0, valor: 0 },
         sobras: { quantidade: 0, valor: 0 },
         semConferencia: 0,
+        trocoNosCaixas: null,
+        caixasNoTotal: 0,
       };
 
   // quebra por ciclo 16→15 (data real do lançamento)
@@ -345,6 +368,7 @@ export function montarResumoExecutivo(e: EntradaResumoExecutivo): ResumoExecutiv
   ];
   for (const cmp of indisponiveis) if (cmp.status === "sem-dados" && cmp.nota && !vistos.has(cmp.nota)) { vistos.add(cmp.nota); avisos.push(`${cmp.nota} — não exibido para não mostrar zero onde não há dado.`); }
   if (!troco.disponivel && troco.nota && !vistos.has(troco.nota)) avisos.push(`${troco.nota} — não exibido para não mostrar zero onde não há dado.`);
+  if (troco.disponivel && troco.nota) avisos.push(`${troco.nota}.`);
   resumo.semNenhumDado = totais.every((t) => t.atual.status === "sem-dados") && formas.every((f) => f.atual.status === "sem-dados");
   return resumo;
 }
@@ -393,7 +417,7 @@ export function textoWhatsappSemanal(r: ResumoExecutivo): string {
     linhaTotal("❌", "cancelamentos", "Total de cancelamentos"),
     linhaTotal("📌", "compraDireta", "Retirada Compra Direta"),
     linhaTotal("🏦", "retiradaDeposito", "Retirada Depósito"),
-    linhaTotal("🪙", "troco", "Troco (faltas)"),
+    linhaTotal("🪙", "troco", "Troco nos Caixas"),
     linhaTotal("⚠️", "quebra", "Quebra de Caixa"),
     "",
     "💳 *Formas de pagamento*",
@@ -418,9 +442,11 @@ export function textoWhatsappSemanal(r: ResumoExecutivo): string {
   const tr = det.troco;
   if (!tr.disponivel) linhas.push(`- Sem dados no período (${tr.nota ?? "base sem dados"}).`);
   else {
+    linhas.push(`- Troco nos caixas (conferido pelo gerente): ${moedaBR(tr.trocoNosCaixas ?? 0)} em ${tr.caixasNoTotal} caixas`);
     linhas.push(`- Caixas: ${tr.caixas} · conferidos ${tr.conferidos} · com divergência ${tr.divergencias} · sem valor de conferência ${tr.semConferencia}`);
     linhas.push(`- Faltas: ${tr.faltas.quantidade} (${moedaBR(tr.faltas.valor)}) · Sobras: ${tr.sobras.quantidade} (${moedaBR(tr.sobras.valor)})`);
     linhas.push(`- Informado: ${moedaBR(tr.informado ?? 0)} · Conferido: ${moedaBR(tr.conferido ?? 0)}`);
+    if (tr.nota) linhas.push(`- ${tr.nota}`);
   }
 
   linhas.push("", `⚠️ *Quebra de Caixa* · ${valorOuSem(det.quebra.total)}`);
@@ -507,10 +533,12 @@ export function modeloDaImagem(r: ResumoExecutivo): ModeloImagem {
   const tr = det.troco;
   const troco: SecaoImagem = {
     titulo: "Troco",
-    total: tr.disponivel ? moedaBR(tr.faltas.valor) + " em faltas" : "Sem dados",
+    total: tr.disponivel ? moedaBR(tr.trocoNosCaixas ?? 0) + " nos caixas" : "Sem dados",
+    ...(tr.disponivel && tr.nota ? { nota: tr.nota } : {}),
     linhas: !tr.disponivel
       ? [{ texto: tr.nota ?? "Base sem dados" }]
       : [
+          { texto: `Caixas com troco conferido`, valor: String(tr.caixasNoTotal) },
           { texto: `Caixas conferidos`, valor: String(tr.conferidos) },
           { texto: `Com divergência`, valor: String(tr.divergencias) },
           { texto: `Sem valor de conferência`, valor: String(tr.semConferencia) },
