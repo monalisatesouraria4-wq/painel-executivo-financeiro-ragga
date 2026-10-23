@@ -92,6 +92,39 @@ export const ROTULO_STATUS_CAIXA: Record<StatusCaixaTroco, string> = {
   sobra: "Sobra",
 };
 
+// ───────────── troco nos caixas (montante conferido) ─────────────
+
+export interface TrocoNosCaixas {
+  /** Σ "Conferido pelo gerente" dos caixas incluídos (nunca usa o "informado pelo colaborador"). */
+  total: number;
+  /** Caixas incluídos na soma (com valor de conferência; fora os 0/0). */
+  caixas: number;
+  /** Caixas 0/0 ("sem valor de conferência registrado"): ficam fora da contagem e entram com valor 0. */
+  semValor: number;
+}
+
+/**
+ * Montante de troco CONFERIDO pelo gerente (coluna "R$ Troco conferido pelo gerente" = `troco_conferido_gerente`), nos caixas das lojas.
+ * Calculado à parte das faltas/sobras (que usam a diferença) — não depende delas. Regras:
+ *  - o MESMO caixa (loja + caixa) conta uma única vez: se aparecer em mais de uma data do período, vale o registro mais recente;
+ *  - caixa 0/0 (conferido = 0 e informado = 0) é o marcador existente de "sem valor de conferência registrado": não conta como caixa conferido
+ *    (seu valor é 0 e não altera a soma);
+ *  - linhas sem loja/caixa informados (só nos testes de cálculo) não são agrupadas.
+ */
+export function somarTrocoNosCaixas(linhas: { unidade?: string; caixa?: string; data?: string; conferido: number; informado: number }[]): TrocoNosCaixas {
+  const ultimo = new Map<string, (typeof linhas)[number]>();
+  const soltas: (typeof linhas)[number][] = [];
+  for (const l of linhas) {
+    if (l.unidade === undefined || l.caixa === undefined) { soltas.push(l); continue; }
+    const k = `${l.unidade}|${l.caixa}`;
+    const atual = ultimo.get(k);
+    if (!atual || (l.data ?? "") >= (atual.data ?? "")) ultimo.set(k, l);
+  }
+  const todas = [...ultimo.values(), ...soltas];
+  const conferidas = todas.filter((l) => !caixaNaoConferido(l));
+  return { total: arred(conferidas.reduce((s, l) => s + l.conferido, 0)), caixas: conferidas.length, semValor: todas.length - conferidas.length };
+}
+
 // ───────────── loja na semana ─────────────
 
 export type SituacaoConferencia = "conferida" | "pendente" | "atrasada" | "sem-registro";
@@ -120,6 +153,8 @@ export interface LojaSemana {
   planos: string[];
   /** Datas de registro da conferência encontradas para a loja. */
   datas: string[];
+  /** Troco conferido pelo gerente nos caixas da loja (ver `somarTrocoNosCaixas`). */
+  trocoConferido: number;
 }
 
 export interface ResumoSemanaTroco {
@@ -145,6 +180,12 @@ export interface ResumoSemanaTroco {
   valorFaltas: number;
   caixasComSobra: number;
   valorSobras: number;
+  /** Total de troco nos caixas: Σ "Conferido pelo gerente" das lojas do universo na semana (independente de faltas e sobras). */
+  trocoNosCaixas: number;
+  /** Caixas incluídos nesse total (com valor de conferência). */
+  caixasNoTotalTroco: number;
+  /** Caixas 0/0 da semana (sem valor de conferência registrado) — fora da contagem. */
+  caixasSemValorTroco: number;
 }
 
 const ordemOficial = new Map<string, number>(UNIDADES.map((u, i) => [u as string, i]));
@@ -188,12 +229,14 @@ export function analisarSemanaTroco(e: { linhas: CaixaTrocoSemana[]; inicioSeman
         valorSobra: arred(sobras.reduce((s, c) => s + c.diferenca, 0)),
         planos,
         datas: [...new Set(caixas.map((c) => c.data))].sort(),
+        trocoConferido: somarTrocoNosCaixas(caixas).total,
       };
     })
     .sort((a, b) => porOrdemOficial(a.unidade, b.unidade));
 
   const conta = (s: SituacaoConferencia) => lojas.filter((l) => l.situacao === s).length;
   const conferidas = lojas.filter((l) => l.situacao === "conferida");
+  const trocoNosCaixas = somarTrocoNosCaixas(lojas.flatMap((l) => l.caixas));
   return {
     semana,
     prazo,
@@ -213,6 +256,9 @@ export function analisarSemanaTroco(e: { linhas: CaixaTrocoSemana[]; inicioSeman
     valorFaltas: arred(lojas.reduce((s, l) => s + l.valorFalta, 0)),
     caixasComSobra: lojas.reduce((s, l) => s + l.comSobra, 0),
     valorSobras: arred(lojas.reduce((s, l) => s + l.valorSobra, 0)),
+    trocoNosCaixas: trocoNosCaixas.total,
+    caixasNoTotalTroco: trocoNosCaixas.caixas,
+    caixasSemValorTroco: trocoNosCaixas.semValor,
   };
 }
 

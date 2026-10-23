@@ -11,6 +11,7 @@ import {
   type EntradaPeriodo,
   type JanelaSemana,
 } from "@/lib/services/resumoExecutivo";
+import { analisarSemanaTroco, somarTrocoNosCaixas } from "@/lib/services/trocoSemanal";
 
 /** Resumo Semanal Executivo — cálculos, composição dos dados, período, texto e modelo da imagem. Dados fictícios. */
 const ATUAL: JanelaSemana = { inicio: "2026-10-12", fim: "2026-10-18" };
@@ -78,7 +79,11 @@ describe("totais e regras de cada base", () => {
     expect(t.semConferencia).toBe(1);
     expect(t.faltas).toEqual({ quantidade: 1, valor: 5 });
     expect(t.sobras).toEqual({ quantidade: 1, valor: 2 });
-    expect(total("troco").atual.valor).toBe(5);
+    // "Troco nos Caixas" = Σ CONFERIDO pelo gerente (100 + 50 + 20; o caixa 0/0 fica fora) — NÃO é o valor das faltas (5) nem das sobras (2)
+    expect(total("troco").atual.valor).toBe(170);
+    expect(total("troco").rotulo).toBe("Troco nos Caixas");
+    expect(t.trocoNosCaixas).toBe(170);
+    expect(t.caixasNoTotal).toBe(3);
   });
   it("quebra: total pela data real e separada por ciclo 16→15 quando a semana cruza a virada (14–15/10 × 16/10)", () => {
     expect(r.detalhes.quebra.porCiclo.map((c) => [c.inicio, c.valor, c.quantidade])).toEqual([["2026-09-16", 13, 2], ["2026-10-16", 72.5, 1]]);
@@ -107,7 +112,7 @@ describe("zero real × ausência de dados", () => {
     expect(vaz.semNenhumDado).toBe(false);
   });
   it("base que NÃO cobre a semana por inteiro = sem dados (null), nunca zero, com a nota de até quando a base vai", () => {
-    const sem = montarResumoExecutivo({ atual: ATUAL, anterior: ANTERIOR, bases: bases({ formas: cobre("2026-06-01", "2026-10-04"), troco: cobre("2026-04-08", "2026-10-07") }), dadosAtual: atual, dadosAnterior: anterior });
+    const sem = montarResumoExecutivo({ atual: ATUAL, anterior: ANTERIOR, bases: bases({ formas: cobre("2026-06-01", "2026-10-04"), troco: cobre("2026-04-08", "2026-10-07") }), dadosAtual: { ...atual, troco: [] }, dadosAnterior: anterior });
     const credito = sem.formas.find((f) => f.id === "credito")!;
     expect(credito.atual.valor).toBeNull();
     expect(credito.atual.status).toBe("sem-dados");
@@ -118,6 +123,27 @@ describe("zero real × ausência de dados", () => {
     const texto = textoWhatsappSemanal(sem);
     expect(texto).toContain("Sem dados no período (Formas de pagamento: a base cobre até 04/10/2026)");
     expect(texto).not.toMatch(/Crédito: R\$ 0,00/);
+  });
+  it("Troco: semana com registros SÓ em parte dos dias (conferência até 14/10) mostra o total dos dados disponíveis, com nota — não 'Sem dados'", () => {
+    const parcial = montarResumoExecutivo({ atual: ATUAL, anterior: ANTERIOR, bases: bases({ troco: cobre("2026-04-08", "2026-10-14") }), dadosAtual: atual, dadosAnterior: anterior });
+    const tr = parcial.totais.find((t) => t.id === "troco")!;
+    expect(tr.atual).toEqual({ valor: 170, status: "ok" });
+    expect(parcial.detalhes.troco.disponivel).toBe(true);
+    expect(parcial.detalhes.troco.faltas).toEqual({ quantidade: 1, valor: 5 }); // faltas continuam separadas do total de troco
+    expect(parcial.detalhes.troco.nota).toBe("Troco: a base cobre até 14/10/2026; o total considera só os registros disponíveis da semana");
+    expect(parcial.avisos.some((a) => a.includes("14/10/2026") && a.includes("registros disponíveis"))).toBe(true);
+    expect(textoWhatsappSemanal(parcial)).toContain("registros disponíveis da semana");
+    // cobertura completa: sem nota de parcialidade
+    expect(r.detalhes.troco.nota).toBeUndefined();
+  });
+  it("Troco: semana com caixas conferidos e SEM faltas mostra o troco conferido (não 'Sem dados', não zero); sem nenhum registro na semana = sem dados", () => {
+    const semFaltas = { ...atual, troco: [{ diferenca: 0, conferido: 50, informado: 50 }, { diferenca: 11.5, conferido: 61.5, informado: 50 }] };
+    const ok = montarResumoExecutivo({ atual: ATUAL, anterior: ANTERIOR, bases: bases({ troco: cobre("2026-04-08", "2026-10-14") }), dadosAtual: semFaltas, dadosAnterior: { ...anterior, troco: semFaltas.troco } });
+    expect(ok.totais.find((t) => t.id === "troco")!.atual).toEqual({ valor: 111.5, status: "ok" }); // 50 + 61,5 conferidos
+    expect(ok.detalhes.troco.faltas).toEqual({ quantidade: 0, valor: 0 });
+    expect(ok.totais.find((t) => t.id === "troco")!.anterior).toEqual({ valor: 111.5, status: "ok" });
+    const nenhum = montarResumoExecutivo({ atual: ATUAL, anterior: ANTERIOR, bases: bases({ troco: cobre("2026-04-08", "2026-10-07") }), dadosAtual: { ...atual, troco: [] }, dadosAnterior: anterior });
+    expect(nenhum.totais.find((t) => t.id === "troco")!.atual.valor).toBeNull();
   });
   it("semana anterior sem dados: valor atual aparece, variação não é calculada", () => {
     const parcial = montarResumoExecutivo({ atual: ATUAL, anterior: ANTERIOR, bases: bases({ brindes: cobre("2026-10-12", "2026-10-20") }), dadosAtual: atual, dadosAnterior: anterior });
@@ -153,7 +179,7 @@ describe("texto do WhatsApp e modelo da imagem usam os mesmos dados e o mesmo pe
     expect(m.periodo).toBe("Semana de 12/10/2026 a 18/10/2026");
     expect(m.titulo).toBe("RESUMO SEMANAL EXECUTIVO");
     expect(m.grupo).toBe("Grupo Londrino");
-    expect(m.cartoes.map((c) => c.rotulo)).toEqual(["Faturamento total", "Brindes", "Quebra de Caixa", "Cancelamento Salão", "Cancelamento Delivery", "Total de cancelamentos", "Retirada de Compra Direta", "Retirada Depósito", "Troco (faltas)"]);
+    expect(m.cartoes.map((c) => c.rotulo)).toEqual(["Faturamento total", "Brindes", "Quebra de Caixa", "Cancelamento Salão", "Cancelamento Delivery", "Total de cancelamentos", "Retirada de Compra Direta", "Retirada Depósito", "Troco nos Caixas"]);
     expect(m.cartoes[0].valor).toBe("R$ 1.000,00");
     expect(m.formas.map((f) => f.rotulo)).toEqual(["Crédito", "Débito", "PIX", "Voucher", "Venda a Prazo", "Online/iFood"]);
     expect(m.secoes.map((s) => s.titulo)).toEqual(["Brindes por motivo", "Cancelamento Delivery por motivo", "Cancelamento Salão por motivo", "Compra Direta por motivo", "Retirada Depósito por loja", "Troco", "Quebra de Caixa (ciclo 16 a 15)"]);
@@ -167,5 +193,30 @@ describe("texto do WhatsApp e modelo da imagem usam os mesmos dados e o mesmo pe
     expect(demais.texto).toBe("Demais 10 motivos");
     expect(demais.valor).toBe("R$ " + (muitos.slice(LIMITE_LINHAS_IMAGEM).reduce((s, m) => s + m.valor, 0)).toFixed(2).replace(".", ",") + "");
     expect(textoWhatsappSemanal(big)).toContain("- Demais 5 motivos: R$ " + muitos.slice(15).reduce((s, m) => s + m.valor, 0).toFixed(2).replace(".", ","));
+  });
+});
+
+describe("Troco nos Caixas — Σ 'Conferido pelo gerente' (sem duplicar caixas, sem usar o informado)", () => {
+  const L = (unidade: string, caixa: string, data: string, conferido: number, informado: number) => ({ unidade, caixa, data, conferido, informado, diferenca: conferido - informado });
+  it("soma só o conferido (o informado pelo colaborador não entra) e separa os caixas 0/0", () => {
+    const x = somarTrocoNosCaixas([L("BG 01", "PDV 01", "2026-10-14", 100, 90), L("BG 01", "PDV 02", "2026-10-14", 50, 70), L("BG 02", "PDV 01", "2026-10-14", 0, 0)]);
+    expect(x).toEqual({ total: 150, caixas: 2, semValor: 1 });
+  });
+  it("o MESMO caixa em duas datas da semana conta uma vez (vale o registro mais recente); caixas diferentes somam", () => {
+    const x = somarTrocoNosCaixas([L("BG 01", "PDV 01", "2026-10-13", 80, 80), L("BG 01", "PDV 01", "2026-10-14", 100, 100), L("BG 02", "PDV 01", "2026-10-14", 60, 60)]);
+    expect(x).toEqual({ total: 160, caixas: 2, semValor: 0 });
+  });
+  it("conferido 0 com informado diferente de 0 é valor conferido real (entra na contagem); 0/0 não", () => {
+    expect(somarTrocoNosCaixas([L("BG 01", "PDV 01", "2026-10-14", 0, 30)])).toEqual({ total: 0, caixas: 1, semValor: 0 });
+    expect(somarTrocoNosCaixas([])).toEqual({ total: 0, caixas: 0, semValor: 0 });
+  });
+  it("a aba Controles de Caixa → Troco usa a mesma soma, respeita o filtro de loja e mantém faltas/sobras à parte", () => {
+    const linhas = [L("BG 01", "PDV 01", "2026-10-14", 100, 95), L("BG 01", "PDV 02", "2026-10-14", 50, 52), L("BG 02", "PDV 01", "2026-10-14", 200, 200)].map((l) => ({ ...l, operador: null, planoDeAcao: null }));
+    const todas = analisarSemanaTroco({ linhas, inicioSemana: "2026-10-12", hoje: "2026-10-20" });
+    expect(todas).toMatchObject({ trocoNosCaixas: 350, caixasNoTotalTroco: 3, caixasSemValorTroco: 0, valorFaltas: 2, valorSobras: 5 });
+    const so01 = analisarSemanaTroco({ linhas, inicioSemana: "2026-10-12", hoje: "2026-10-20", universo: ["BG 01"] });
+    expect(so01).toMatchObject({ trocoNosCaixas: 150, caixasNoTotalTroco: 2, valorFaltas: 2, valorSobras: 5 });
+    // outra semana não entra
+    expect(analisarSemanaTroco({ linhas, inicioSemana: "2026-10-05", hoje: "2026-10-20" }).trocoNosCaixas).toBe(0);
   });
 });

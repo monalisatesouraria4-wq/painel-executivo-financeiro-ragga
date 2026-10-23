@@ -170,6 +170,17 @@ export function TrocoTab({
 
       {/* A. CONFERÊNCIA SEMANAL */}
       <Secao titulo="A. Conferência semanal">
+        <Card className="mb-4 border-ragga-blue/40 bg-ragga-blue/10">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ragga-blue">Total de Troco nos Caixas</p>
+          <p data-testid="total-troco-nos-caixas" className="mt-1 text-3xl font-semibold text-ragga-blue-dark">{atual.semanaCarregada ? moeda.format(atual.trocoNosCaixas) : "—"}</p>
+          <p className="mt-2 text-xs text-foreground/60">
+            {atual.semanaCarregada
+              ? `Soma do “Conferido pelo gerente” de ${atual.caixasNoTotalTroco} caixa(s) · ${lojaFiltro ? `loja ${lojaFiltro}` : "todas as lojas"} · semana ${dataBR(semana.inicio)} a ${dataBR(semana.fim)} (registro em ${dataRegistroTxt})${
+                  atual.caixasSemValorTroco > 0 ? ` · ${atual.caixasSemValorTroco} caixa(s) sem valor de conferência (0/0) ficam fora da contagem` : ""
+                }. É o dinheiro de troco conferido nos caixas — não é falta nem sobra.`
+              : "Semana ainda não carregada — nenhum valor é apresentado."}
+          </p>
+        </Card>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Card>
             <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Lojas conferidas</p>
