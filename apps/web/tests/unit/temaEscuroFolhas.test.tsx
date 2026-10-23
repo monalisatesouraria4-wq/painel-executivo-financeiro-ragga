@@ -74,6 +74,12 @@ describe("folhas flutuantes", () => {
     expect(bloco).toMatch(/animation:\s*none/);
     expect(bloco).toContain("var(--y-fixo)");
   });
+  it("nenhuma tela cobre a camada das folhas com fundo opaco no <main> (Visão Geral incluída)", () => {
+    const telas = ["components/visaoGeral/VisaoGeralView.tsx", "components/comparativo/ComparativoMensalView.tsx", "components/fechamentoSemanal/FechamentoSemanalView.tsx", "components/fechamentoWhatsapp/FechamentoWhatsappView.tsx", "components/atualizacao/AtualizacaoBasesView.tsx"];
+    for (const tela of telas) {
+      for (const m of ler(tela).matchAll(/<main className="([^"]*)"/g)) expect(m[1], `${tela}: <main> com fundo opaco esconde as folhas`).not.toMatch(/bg-/);
+    }
+  });
   it("está montada atrás do conteúdo no layout raiz", () => {
     const layout = ler("app/layout.tsx");
     expect(layout.indexOf("<FolhasFlutuantes />")).toBeGreaterThan(-1);

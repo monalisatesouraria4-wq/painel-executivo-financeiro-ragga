@@ -20,9 +20,9 @@ let sqlB: postgres.Sql; // segunda conexão independente (outra sessão)
 const dirs: string[] = [];
 const novoDir = () => { const d = mkdtempSync(join(tmpdir(), "sync-pg-")); dirs.push(d); return d; };
 
-const TABELAS: Record<BaseSnapshot, string> = { faturamento: "faturamento", brindes: "brindes", cancelamentoSalao: "cancelamento_salao", cancelamentoDelivery: "cancelamento_delivery", compraDireta: "compra_direta", retiradaDeposito: "retirada_deposito" };
+const TABELAS: Record<BaseSnapshot, string> = { faturamento: "faturamento", formasPagamento: "formas_pagamento", brindes: "brindes", cancelamentoSalao: "cancelamento_salao", cancelamentoDelivery: "cancelamento_delivery", compraDireta: "compra_direta", retiradaDeposito: "retirada_deposito" };
 const COLUNAS_CHAVE: Record<BaseSnapshot, string[]> = {
-  faturamento: [], brindes: ["motivo", "motivo2"], cancelamentoSalao: ["motivo"], cancelamentoDelivery: ["motivo"], compraDireta: ["motivo"],
+  faturamento: [], formasPagamento: ["forma"], brindes: ["motivo", "motivo2"], cancelamentoSalao: ["motivo"], cancelamentoDelivery: ["motivo"], compraDireta: ["motivo"],
   retiradaDeposito: ["caixa", "motivo", "motivo_descricao", "usuario", "usuario_autorizador"],
 };
 

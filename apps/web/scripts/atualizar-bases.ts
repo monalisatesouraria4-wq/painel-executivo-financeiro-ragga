@@ -30,6 +30,7 @@ import { assinaturaRejeicao, resumirClasses, type RejeicaoParaClassificar } from
 import { resolverAbaConferenciaPorData, type AbaConferenciaBruta } from "../lib/import/resolverAbaConferencia";
 import { lerQuebraDaPlanilha, type QuebraLida } from "../lib/import/quebraDaPlanilha";
 import { parseFaturamento } from "../lib/import/parsers/faturamento";
+import { parseFormasPagamento } from "../lib/import/parsers/formasPagamento";
 import { parseFechamentoCaixa } from "../lib/import/parsers/fechamentoCaixa";
 import { parsePdvMaquininha } from "../lib/import/parsers/pdvMaquininha";
 import { parseTroco } from "../lib/import/parsers/troco";
@@ -59,16 +60,17 @@ const TABELA: Record<BaseId, string> = {
   retiradaDeposito: "retirada_deposito",
   troco: "troco",
   faturamento: "faturamento",
+  formasPagamento: "formas_pagamento",
 };
 /** Ordem fixa de gravação (a mesma das atualizações anteriores). */
-const ORDEM: BaseId[] = ["brindes", "cancelamentoSalao", "cancelamentoDelivery", "compraDireta", "conferencia", "quebraCaixa", "fechamento", "pdvMaquininha", "retiradaDeposito", "troco", "faturamento"];
+const ORDEM: BaseId[] = ["brindes", "cancelamentoSalao", "cancelamentoDelivery", "compraDireta", "conferencia", "quebraCaixa", "fechamento", "pdvMaquininha", "retiradaDeposito", "troco", "faturamento", "formasPagamento"];
 
 /** SSL obrigatório, exceto para um PostgreSQL LOCAL descartável (host 127.0.0.1/localhost), usado só nos testes de integração. */
 const sslPara = (url: string): "require" | false => (/^postgres(ql)?:\/\/[^@]*@(127\.0\.0\.1|localhost)[:/]/.test(url) ? false : "require");
 const dia = (d: Date) => d.toISOString().slice(0, 10);
 const hojeBrasil = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
-interface Args { somente: string[]; arquivos: string[]; gravar: boolean; ref: string; plano?: string; aceitar: string[]; detalhar: boolean; corrigir?: string; restaurar?: string; removerNovos: boolean; confirmar: boolean; backupDir?: string; hashPlano?: string; aprovarExclusoes: Record<string, string>; semExclusao: string[]; confirmarDiasSemMovimento: string[]; limites: LimitesSincronizacao }
+interface Args { de?: string; ate?: string; somente: string[]; arquivos: string[]; gravar: boolean; ref: string; plano?: string; aceitar: string[]; detalhar: boolean; corrigir?: string; restaurar?: string; removerNovos: boolean; confirmar: boolean; backupDir?: string; hashPlano?: string; aprovarExclusoes: Record<string, string>; semExclusao: string[]; confirmarDiasSemMovimento: string[]; limites: LimitesSincronizacao }
 function lerArgs(argv: string[]): Args {
   const a: Args = { somente: [], arquivos: [], gravar: false, ref: hojeBrasil(), aceitar: [], detalhar: false, confirmar: false, removerNovos: false, aprovarExclusoes: {}, semExclusao: [], confirmarDiasSemMovimento: [], limites: {} };
   for (let i = 0; i < argv.length; i++) {
@@ -90,6 +92,8 @@ function lerArgs(argv: string[]): Args {
     else if (v === "--limite-remocao-percentual") a.limites.maxRemocaoPercentual = Number(argv[++i]);
     else if (v === "--limite-remocao-valor") a.limites.maxValorRemovidoCentavos = Math.round(Number(argv[++i]) * 100);
     else if (v === "--ref") a.ref = argv[++i];
+    else if (v === "--de") a.de = argv[++i];
+    else if (v === "--ate") a.ate = argv[++i];
     else if (v === "--plano") a.plano = argv[++i];
     else if (v === "--aceitar") a.aceitar = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else a.arquivos.push(v);
@@ -107,6 +111,7 @@ function aceitasDoRepositorio(): string[] {
 function executarParser(id: BaseId, cab: unknown[], ln: unknown[][]): ResultadoParse {
   switch (id) {
     case "faturamento": return parseFaturamento(cab, ln);
+    case "formasPagamento": return parseFormasPagamento(cab, ln);
     case "fechamento": return parseFechamentoCaixa(cab, ln);
     case "pdvMaquininha": return parsePdvMaquininha(cab, ln);
     case "troco": return parseTroco(cab, ln);
@@ -137,6 +142,10 @@ interface Simulacao {
   /** Só Cancelamento Salão: detalhes individuais dos estornos (gravados pelo fluxo idempotente depois da sincronização). */
   detalhesCS?: Parameters<typeof persistirDetalhesCancelamentoSalao>[0];
 }
+
+/** Janela opcional (`--de` / `--ate`, AAAA-MM-DD): só os registros dentro dela entram na simulação, no plano (e no hash) e na gravação. */
+let JANELA: { de?: string; ate?: string } = {};
+const dentroDaJanela = (d: Date) => (!JANELA.de || dia(d) >= JANELA.de) && (!JANELA.ate || dia(d) <= JANELA.ate);
 
 async function simular(base: BaseId, arquivo: string, file: File, ref: Date): Promise<Simulacao> {
   const s: Simulacao = { base, arquivo, ok: false, validos: 0, rejeitados: 0, lojas: 0, periodo: "—", extra: "", rejeicoes: [] };
@@ -170,6 +179,7 @@ async function simular(base: BaseId, arquivo: string, file: File, ref: Date): Pr
       if (!c.ok) return { ...s, bloqueio: `PDV: colunas ausentes: ${c.faltando.join(", ")}` };
     }
     res = executarParser(base, cab, linhas);
+    if (JANELA.de || JANELA.ate) res = { ...res, registros: res.registros.filter((r) => dentroDaJanela(r.data)) };
     if (base === "pdvMaquininha") {
       const maqEmBranco = linhas.filter((l) => l[0] && String(l[0]).toUpperCase() !== "TOTAL" && parseValorCelula(l[4]) === null).length;
       const lote = conferirLotePdv(res.registros as never, maqEmBranco);
@@ -415,10 +425,12 @@ async function relatorioQuebra(s: Simulacao, detalhar: boolean): Promise<string[
 
 async function main() {
   const args = lerArgs(process.argv.slice(2));
+  for (const [n, v] of [["--de", args.de], ["--ate", args.ate]] as const) if (v !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(v)) { console.log(`⛔ ${n} precisa estar no formato AAAA-MM-DD`); process.exit(1); }
+  JANELA = { de: args.de, ate: args.ate };
   if (args.restaurar) return rodarRestauracao(args);
   if (args.corrigir) return rodarCorrecao(args);
   if (args.arquivos.length === 0) {
-    console.log("Uso: npm run atualizar-bases -- <planilha.xlsx> [...] [--compra-direta-inicio AAAA-MM-DD --compra-direta-fim AAAA-MM-DD] [--gravar --plano plano.json] [--detalhar] [--corrigir plano.json [--confirmar] [--backup-dir pasta]] [--ref AAAA-MM-DD] [--aceitar base,base]");
+    console.log("Uso: npm run atualizar-bases -- <planilha.xlsx> [...] [--compra-direta-inicio AAAA-MM-DD --compra-direta-fim AAAA-MM-DD] [--gravar --plano plano.json] [--detalhar] [--corrigir plano.json [--confirmar] [--backup-dir pasta]] [--ref AAAA-MM-DD] [--de AAAA-MM-DD] [--ate AAAA-MM-DD] [--aceitar base,base]");
     process.exit(1);
   }
   const ref = new Date(`${args.ref}T00:00:00Z`);
