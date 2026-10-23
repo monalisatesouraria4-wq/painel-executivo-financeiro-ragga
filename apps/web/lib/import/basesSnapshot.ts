@@ -1,5 +1,5 @@
 /** Bases com sincronização autoritativa (aprovadas). Módulo sem dependências de Node: pode ser usado no navegador. */
-export const BASES_SNAPSHOT = ["faturamento", "brindes", "cancelamentoSalao", "cancelamentoDelivery", "compraDireta", "retiradaDeposito"] as const;
+export const BASES_SNAPSHOT = ["faturamento", "formasPagamento", "brindes", "cancelamentoSalao", "cancelamentoDelivery", "compraDireta", "retiradaDeposito"] as const;
 export type BaseSnapshot = (typeof BASES_SNAPSHOT)[number];
 export const baseSnapshot = (b: string): b is BaseSnapshot => (BASES_SNAPSHOT as readonly string[]).includes(b);
 
@@ -20,6 +20,8 @@ export interface ConfigSincronizacao {
 
 export const CONFIG_SINCRONIZACAO: Record<BaseSnapshot, ConfigSincronizacao> = {
   faturamento: { base: "faturamento", tabela: "faturamento", camposChave: [], agregacao: "soma" },
+  // Formas de Pagamento: mesma planilha do Faturamento (VENDAS.xlsx), agregada por loja + dia + `Desc. pagam.` (texto ORIGINAL; a classificação só acontece na leitura)
+  formasPagamento: { base: "formasPagamento", tabela: "formas_pagamento", camposChave: ["forma"], agregacao: "soma" },
   brindes: { base: "brindes", tabela: "brindes", camposChave: ["motivo", "motivo2"], agregacao: "soma" },
   cancelamentoSalao: { base: "cancelamentoSalao", tabela: "cancelamento_salao", camposChave: ["motivo"], agregacao: "soma" },
   cancelamentoDelivery: { base: "cancelamentoDelivery", tabela: "cancelamento_delivery", camposChave: ["motivo"], agregacao: "soma" },

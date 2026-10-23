@@ -844,7 +844,7 @@ export function VisaoGeralView({
     : formatadorData.format(dados.dataFim);
 
   return (
-    <main className="flex-1 space-y-5 bg-ragga-bg px-6 py-6">
+    <main className="flex-1 space-y-5 px-6 py-6">
       {/* HEADER — identidade Ragga: logo oficial + detalhe lateral em degradê (item 4). */}
       <div className="flex flex-wrap items-stretch gap-4">
         <span className="hidden w-1 shrink-0 rounded-full bg-gradient-to-b from-ragga-blue to-ragga-blue-dark sm:block" />

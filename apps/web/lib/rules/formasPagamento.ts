@@ -11,22 +11,44 @@ import type { FormaPagamentoBuckets } from "@/lib/services/fechamentoWhatsapp";
  * Qualquer valor de `Desc. pagam.` não reconhecido cai em "Outros" —
  * nunca descartado silenciosamente.
  */
+/**
+ * Regras oficiais de agrupamento (a descrição ORIGINAL continua guardada em `formas_pagamento.forma`; a consolidação acontece só aqui,
+ * na apresentação, e cada lançamento cai em UMA única categoria):
+ *  - CRÉDITO  = CARTAO CREDITO + TEF - CREDITO
+ *  - DÉBITO   = CARTAO DEBITO + TEF - DEBITO
+ *  - PIX      = PIX MAQUININHA + TEF - PIX
+ *  - VOUCHER  = VOUCHER + TEF - VOUCHER
+ *  - ONLINE   = Pagamento online + Cupom de desconto (Pago pelo iFood)
+ * A chave é comparada sem diferença de maiúsculas/minúsculas, acentos nem espaços sobrando (ver `normalizarForma`).
+ */
 const MAPA_FORMA_PARA_BUCKET: Record<string, keyof FormaPagamentoBuckets> = {
   "CARTAO CREDITO": "credito",
   "TEF - CREDITO": "credito",
   "CARTAO DEBITO": "debito",
   "TEF - DEBITO": "debito",
   "PIX MAQUININHA": "pix",
+  "TEF - PIX": "pix",
   VOUCHER: "voucher",
   "TEF - VOUCHER": "voucher",
-  "Venda a prazo": "vendaAPrazo",
-  "Pagamento online": "online",
-  "Cupom de desconto (Pago pelo iFood)": "online",
+  "VENDA A PRAZO": "vendaAPrazo",
+  "PAGAMENTO ONLINE": "online",
+  "CUPOM DE DESCONTO (PAGO PELO IFOOD)": "online",
   DINHEIRO: "dinheiro",
 };
 
+/** Forma de comparação: sem acentos, maiúsculas, espaços das pontas removidos, espaços repetidos reduzidos e hífen com um espaço de cada lado. */
+export function normalizarForma(formaRaw: string): string {
+  return formaRaw
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*-\s*/g, " - ")
+    .trim();
+}
+
 export function classificarFormaPagamento(formaRaw: string): keyof FormaPagamentoBuckets {
-  return MAPA_FORMA_PARA_BUCKET[formaRaw.trim()] ?? "outros";
+  return MAPA_FORMA_PARA_BUCKET[normalizarForma(formaRaw)] ?? "outros";
 }
 
 export function bucketsVazios(): FormaPagamentoBuckets {

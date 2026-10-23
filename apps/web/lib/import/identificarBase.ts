@@ -32,7 +32,7 @@ const DICAS: { padrao: RegExp; bases: BaseId[] }[] = [
   { padrao: /PDV|ADQUIRENTE/, bases: ["pdvMaquininha"] },
   { padrao: /DEPOSITO/, bases: ["retiradaDeposito"] },
   { padrao: /TROCO/, bases: ["troco"] },
-  { padrao: /VENDAS|FATURAMENTO/, bases: ["faturamento"] },
+  { padrao: /VENDAS|FATURAMENTO/, bases: ["faturamento", "formasPagamento"] },
 ];
 
 const ABA_CICLO = /^\d{2}\.\d{2}\s*A\s*\d{2}\.\d{2}$/;
@@ -49,6 +49,10 @@ export function identificarBase(e: { nomeArquivo: string; abas: string[]; cabeca
 
   if (dica) {
     const base = dica.bases[0];
+    // VENDAS.xlsx: o mesmo arquivo alimenta duas bases (Faturamento e Formas de Pagamento), desde que as colunas de ambas existam
+    if (dica.bases.length > 1 && dica.bases.every((b) => candidatas.includes(b))) {
+      return { status: "ok", bases: dica.bases, motivo: "nome do arquivo e colunas obrigatórias conferem (alimenta Faturamento e Formas de Pagamento)" };
+    }
     if (dica.bases.length > 1) {
       return { status: "recusado", bases: [], motivo: `o nome sugere ${dica.bases.join(" + ")}, mas a planilha não tem as abas de ciclo esperadas` };
     }
@@ -58,6 +62,7 @@ export function identificarBase(e: { nomeArquivo: string; abas: string[]; cabeca
     return { status: "recusado", bases: [], motivo: `o nome sugere ${info.nome}, mas faltam colunas obrigatórias: ${faltando.join(", ") || "(estrutura não reconhecida)"}` };
   }
 
+  if (candidatas.length === 2 && candidatas.includes("faturamento") && candidatas.includes("formasPagamento")) return { status: "ok", bases: ["faturamento", "formasPagamento"], motivo: "identificada só pelas colunas obrigatórias (Faturamento + Formas de Pagamento)" };
   if (candidatas.length === 1) return { status: "ok", bases: candidatas, motivo: "identificada só pelas colunas obrigatórias" };
   if (candidatas.length === 0) return { status: "desconhecido", bases: [], motivo: "nenhuma base tem todas as colunas obrigatórias neste arquivo" };
   return { status: "ambiguo", bases: candidatas, motivo: `colunas compatíveis com mais de uma base (${candidatas.join(", ")}) e o nome do arquivo não desempata` };

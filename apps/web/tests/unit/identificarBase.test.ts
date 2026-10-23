@@ -20,9 +20,22 @@ describe("identificarBase — nome do arquivo + colunas obrigatórias oficiais",
     it(`${nome} → ${id}`, () => {
       const r = identificarBase({ nomeArquivo: nome, abas: ["Planilha1"], cabecalhoPrimeiraAba: cabecalhoDe(id) });
       expect(r.status).toBe("ok");
-      expect(r.bases).toEqual([id]);
+      // VENDAS.xlsx alimenta DUAS bases: Faturamento e Formas de Pagamento
+      expect(r.bases).toEqual(id === "faturamento" ? ["faturamento", "formasPagamento"] : [id]);
     });
   }
+
+  it("VENDAS.xlsx (cabeçalho real, coluna J = Desc. pagam.) alimenta Faturamento E Formas de Pagamento", () => {
+    const cab = ["Filial", "Caixa", "Data", "Cupom", "Hora", "Itens", "Chave", "CPF/CNPJ", "Nome do cliente", "Desc. pagam.", "Nr. parc", "Vl. pagamento"];
+    expect(identificarBase({ nomeArquivo: "VENDAS.xlsx", abas: ["Planilha1"], cabecalhoPrimeiraAba: cab })).toMatchObject({ status: "ok", bases: ["faturamento", "formasPagamento"] });
+    // sem dica no nome: as colunas sozinhas também levam às duas bases (nunca ambíguo)
+    expect(identificarBase({ nomeArquivo: "arquivo qualquer.xlsx", abas: ["Planilha1"], cabecalhoPrimeiraAba: cab })).toMatchObject({ status: "ok", bases: ["faturamento", "formasPagamento"] });
+  });
+
+  it("VENDAS.xlsx sem a coluna Desc. pagam. é RECUSADO (não vira Faturamento pela metade)", () => {
+    const cab = ["Filial", "Data", "Vl. pagamento"];
+    expect(identificarBase({ nomeArquivo: "VENDAS.xlsx", abas: ["Planilha1"], cabecalhoPrimeiraAba: cab }).status).toBe("recusado");
+  });
 
   it("planilha por ciclos alimenta Conferência E Quebra de Caixa (qualquer número de versão)", () => {
     const abas = ["MENU", "16.08 a 15.09", "QUEBRA 16-08 A 15-09", "16.09 a 15.10", "QUEBRA 16-09 A 15-10", "RESUMO", "BANCO DE DADOS"];

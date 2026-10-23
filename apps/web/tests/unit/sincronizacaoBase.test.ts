@@ -180,10 +180,11 @@ describe("hash do plano", () => {
 });
 
 describe("configuração", () => {
-  it("cobre as 6 tabelas autoritativas aprovadas e a chave de cada uma", () => {
-    expect([...BASES_SNAPSHOT].sort()).toEqual(["brindes", "cancelamentoDelivery", "cancelamentoSalao", "compraDireta", "faturamento", "retiradaDeposito"]);
+  it("cobre as 7 tabelas autoritativas aprovadas e a chave de cada uma", () => {
+    expect([...BASES_SNAPSHOT].sort()).toEqual(["brindes", "cancelamentoDelivery", "cancelamentoSalao", "compraDireta", "faturamento", "formasPagamento", "retiradaDeposito"]);
     expect(CONFIG_SINCRONIZACAO.brindes.camposChave).toEqual(["motivo", "motivo2"]);
     expect(CONFIG_SINCRONIZACAO.faturamento.camposChave).toEqual([]);
+    expect(CONFIG_SINCRONIZACAO.formasPagamento).toMatchObject({ tabela: "formas_pagamento", camposChave: ["forma"], agregacao: "soma" });
     expect(CONFIG_SINCRONIZACAO.retiradaDeposito.camposChave).toHaveLength(5);
   });
   it("escopoDaFonte usa só as lojas e datas presentes no arquivo", () => {

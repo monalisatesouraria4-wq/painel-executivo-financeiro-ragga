@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
   faturamento,
+  formasPagamento,
   brindes,
   cancelamentoSalao,
   cancelamentoDelivery,
@@ -30,6 +31,7 @@ export interface StatusBase {
 
 const TABELA_POR_BASE = {
   faturamento,
+  formasPagamento,
   brindes,
   cancelamentoSalao,
   cancelamentoDelivery,

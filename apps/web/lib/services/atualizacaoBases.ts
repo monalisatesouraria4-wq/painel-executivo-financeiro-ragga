@@ -11,6 +11,7 @@ import { resumirClasses } from "@/lib/import/classificarRejeicoes";
 import { persistirDetalhesCancelamentoSalao } from "@/lib/actions/persistirCancelamentoSalaoDetalhes";
 import { parseCancelamentoSalaoDetalhe, type ResultadoParseDetalhe } from "@/lib/import/parsers/cancelamentoSalaoDetalhe";
 import { parseFaturamento } from "@/lib/import/parsers/faturamento";
+import { parseFormasPagamento } from "@/lib/import/parsers/formasPagamento";
 import { parseFechamentoCaixa } from "@/lib/import/parsers/fechamentoCaixa";
 import { parsePdvMaquininha } from "@/lib/import/parsers/pdvMaquininha";
 import { parseTroco } from "@/lib/import/parsers/troco";
@@ -46,6 +47,7 @@ export type BaseId =
   | "cancelamentoDelivery"
   | "compraDireta"
   | "faturamento"
+  | "formasPagamento"
   | "conferencia"
   | "quebraCaixa";
 
@@ -88,6 +90,20 @@ export const BASE_REGISTRY: BaseInfo[] = [
     icone: "💰",
     alimenta: "Visão Geral, Indicadores, Retiradas, Fechamento WhatsApp/Semanal",
     arquivoEsperado: "VENDAS.xlsx",
+    colunasObrigatorias: [
+      { rotulo: "Filial", coluna: "FILIAL", exata: true },
+      { rotulo: "Data", coluna: "DATA", exata: true },
+      { rotulo: "Vl. Pagamento", coluna: "VL. PAGAMENTO", exata: false },
+      { rotulo: "Desc. Pagam.", coluna: "DESC. PAGAM.", exata: false },
+    ],
+  },
+  {
+    id: "formasPagamento",
+    tipoBase: "formas_pagamento",
+    nome: "Formas de Pagamento",
+    icone: "💳",
+    alimenta: "Visão Geral, Fechamento WhatsApp/Semanal, Resumo Semanal Executivo",
+    arquivoEsperado: "VENDAS.xlsx (o mesmo arquivo do Faturamento)",
     colunasObrigatorias: [
       { rotulo: "Filial", coluna: "FILIAL", exata: true },
       { rotulo: "Data", coluna: "DATA", exata: true },
@@ -239,6 +255,7 @@ const MENSAGEM_ZERO_REGISTROS: Record<BaseId, string> = {
   cancelamentoDelivery: "Nenhuma linha válida foi encontrada (filial reconhecida, data e valor numérico).",
   compraDireta: "Nenhuma linha válida foi encontrada (filial reconhecida, data e valor numérico).",
   faturamento: "Nenhuma linha válida foi encontrada (filial reconhecida, data e valor numérico).",
+  formasPagamento: "Nenhuma linha válida foi encontrada (filial reconhecida, data, valor numérico e Desc. pagam. preenchida).",
   conferencia: "Nenhuma linha válida foi encontrada nesta aba.",
   quebraCaixa: "Nenhuma linha válida foi encontrada nesta aba (loja reconhecida, data e valor de quebra numérico).",
 };
@@ -273,6 +290,8 @@ function executarParser(id: BaseId, cabecalho: unknown[], linhas: unknown[][]): 
   switch (id) {
     case "faturamento":
       return parseFaturamento(cabecalho, linhas);
+    case "formasPagamento":
+      return parseFormasPagamento(cabecalho, linhas);
     case "fechamento":
       return parseFechamentoCaixa(cabecalho, linhas);
     case "pdvMaquininha":
