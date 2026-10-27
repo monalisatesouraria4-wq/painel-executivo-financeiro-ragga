@@ -84,7 +84,8 @@ describe.skipIf(!URL_TESTE)("Resumo Semanal Executivo — PostgreSQL descartáve
     expect(res.detalhes.compraDireta.notaFiscal).toBe(500);
     expect(t("retiradaDeposito").atual.valor).toBe(1400);
     expect(res.detalhes.retiradaDeposito.porLoja).toEqual([{ unidade: "BG 01", valor: 1000 }, { unidade: "BG 02", valor: 400 }]);
-    expect(t("troco").atual.valor).toBe(10); // falta de 10,00
+    expect(t("troco").atual.valor).toBe(100); // "Troco nos Caixas" = Σ conferido pelo gerente (CX1 = 100; o caixa 0/0 fica fora)
+    expect(res.detalhes.troco.faltas).toEqual({ quantidade: 1, valor: 10 }); // a falta de 10,00 continua separada
     expect(t("quebra").atual.valor).toBe(10);
     expect(res.detalhes.quebra.porCiclo.map((c) => [c.inicio, c.valor])).toEqual([["2026-08-16", 6.5], ["2026-09-16", 3.5]]); // ciclo 16→15
     const [sqlBr] = await sql.unsafe("select sum(valor)::numeric(14,2)::text v from brindes where data between '2026-09-14' and '2026-09-20'");
