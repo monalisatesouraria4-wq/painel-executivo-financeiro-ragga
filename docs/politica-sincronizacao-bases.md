@@ -53,7 +53,7 @@ no mesmo loja+dia (**pista de reclassificação, nunca prova**); quantos loja+di
   (contagem, valor de cada chave, total) → conferência de que **nada fora do escopo mudou** → commit. Qualquer divergência ⇒ rollback.
 - `--plano <arquivo>`: a gravação só prossegue se o plano atual for idêntico ao simulado.
 
-## 3. Brindes (os 760 registros) — investigação somente de leitura
+## 3. Brindes (os 760 registros) — investigação somente de leitura (histórico; a rotina atual preserva os só-no-banco, ver seção 9)
 Nenhum registro de Brindes foi excluído ou corrigido. A planilha traz Caixa, Cupom e Produto por linha, mas o banco guarda só o total por
 loja/dia/motivo/submotivo; sem a planilha antiga não há prova linha a linha de que um registro antigo e um novo sejam o mesmo lançamento.
 Em 215 loja+dias o total do dia é igual ao da fonte (consistente com troca de motivo/submotivo); em 264 o total **difere** (conteúdo da fonte mudou).
@@ -68,7 +68,7 @@ A migração de uma tabela de detalhe de Brindes (por cupom/caixa/produto) **nã
 | Fechamento de Caixa | extração de caixas abertos/fechados/conciliados; mudanças de estado atualizam a mesma chave | manter **upsert** + relatório de órfãos; avaliar snapshot por período quando houver regra de completude do período |
 | PDV × Maquininha | consolidado por forma de pagamento; já houve lote com linhas indevidas | manter **upsert** com a validação de colunas atual; candidata a snapshot por período **depois** de política de nomes de forma e bloqueio de lixo |
 | Troco | semanal; o arquivo real tem colisões de chave dentro do próprio arquivo (última vence) | **não** usar snapshot enquanto a chave não identificar a linha de forma única; manter upsert |
-| Formas de Pagamento | derivada de `VENDAS.xlsx` (mesma fonte do Faturamento) | deve seguir a política do Faturamento e ser sincronizada **na mesma transação e no mesmo escopo**; hoje uma exclusão de Faturamento deixaria formas antigas |
+| Formas de Pagamento | derivada de `VENDAS.xlsx` (mesma fonte do Faturamento) | **implementada (23/10/2026)**: base autoritativa própria (`formasPagamento`, tabela `formas_pagamento`, chave loja+dia+`Desc. pagam.`), alimentada pelo mesmo arquivo. Histórico acima: deve seguir a política do Faturamento e ser sincronizada **na mesma transação e no mesmo escopo**; hoje uma exclusão de Faturamento deixaria formas antigas |
 | Cancelamento Salão (detalhe) | estornos individuais, derivado do mesmo arquivo | idem: sincronizar no mesmo escopo do agregado; hoje segue o fluxo idempotente atual |
 
 Para cada uma, antes de mudar o comportamento: documentar a política (este arquivo), cobrir com testes (unitário + PostgreSQL descartável) e obter sua aprovação.
@@ -99,7 +99,7 @@ Achados (somente leitura): (a) a tabela `retirada_deposito` guarda **todos os mo
 ## 7. Limitações conhecidas
 - Não há camada de autenticação nas Server Actions (como nas demais ações do painel): por isso as exclusões pela interface ficam desabilitadas em produção por padrão.
 - O backup em arquivo depende do sistema de arquivos do servidor (em ambiente serverless é efêmero): para exclusões em produção, configure um diretório persistente ou use o comando.
-- A sincronização do detalhe do Cancelamento Salão e das Formas de Pagamento ainda não acompanha o escopo (ver seção 4).
+- A sincronização do detalhe do Cancelamento Salão ainda não acompanha o escopo do agregado (ver seção 4); as Formas de Pagamento já são uma base autoritativa própria (seção 9).
 
 ## 8. Base mestre: como o botão "Atualizar base" deve se comportar (Brindes e Compra Direta)
 Regra: o arquivo enviado é a **base histórica completa**; ao confirmar, o banco passa a **espelhar** a planilha no escopo (lojas presentes × período do arquivo), sem duplicar e sem manter o que não existe mais na fonte.
@@ -123,3 +123,17 @@ Regra: o arquivo enviado é a **base histórica completa**; ao confirmar, o banc
 3. Pela **tela**: `npm run painel:sincronizacao -- --backup-dir "<pasta durável>"` sobe uma instância (porta 3100) com as exclusões habilitadas **só nela** (o painel normal e o `.env.local` seguem bloqueados); use o botão Atualizar base, revise a prévia, digite `EXCLUIR n` e confirme. Encerre com Ctrl+C.
 4. Depois: rode a simulação de novo (deve mostrar 0 novos, 0 alterados, 0 só no banco e "ESPELHA") e confira os totais.
 5. Se algo estiver errado: `--restaurar` com o backup indicado no relatório.
+
+## 9. Rotina "atualizar base(s)": como o fluxo automático se relaciona com esta política
+O procedimento operacional (identificar → simular → backup → gravar base a base → verificar → relatório) está no `CLAUDE.md` da raiz e **vale como regra
+única** para o comando "atualizar bases". Para não haver regras contraditórias:
+- **A rotina nunca exclui.** Ela usa `--sem-exclusao` nas bases autoritativas (Faturamento, Formas de Pagamento, Brindes, Cancelamentos, Compra Direta e
+  Retirada Depósito): os registros só-no-banco são **preservados** (mesmo quando o plano diz "NÃO ESPELHA"). O espelhamento com exclusões (seção 8) é um
+  procedimento **à parte**, só com pedido e autorização específicos do usuário, backup durável e `SINCRONIZACAO_EXCLUSOES_HABILITADAS=1` apenas naquele comando.
+- **Alterações de valor** (a fonte oficial prevalece) seguem automaticamente quando o arquivo oficial está identificado, o plano corresponde à fonte e as
+  alterações são consistentes; param diante de divergência, risco de duplicidade ou dúvida de identidade. Todas são listadas no relatório (antes → depois).
+- **Quebra de Caixa** só interrompe a rotina diante de risco real de duplicidade/conflito de identidade que a chave oficial (com a ocorrência) não resolva.
+- **Cobertura parcial** (dia final com menos lojas, base até uma data, Troco semanal) não bloqueia: é informada como "a completar".
+- **Backup verificável:** `npm run backup-pre-gravacao` (somente leitura; `apps/web/scripts/backup-pre-gravacao.ts`) copia as 13 tabelas das cargas, linha a linha, com
+  `MANIFESTO.json` (SHA-256, linhas × banco, Σ valor) e se recusa a sobrescrever. Complementa o backup por exclusão/alteração da seção 8.1; não o substitui para exclusões.
+- Testes: `tests/unit/backupPreGravacao.test.ts` (fonte falsa) e `tests/integration/backupPreGravacao.pg.test.ts` (PostgreSQL local descartável; nunca o Supabase).

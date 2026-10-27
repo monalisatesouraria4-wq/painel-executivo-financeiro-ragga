@@ -14,6 +14,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "atualizar-bases": "node --env-file=.env.local --import tsx scripts/atualizar-bases.ts",
+    "backup-pre-gravacao": "node --env-file=.env.local --import tsx scripts/backup-pre-gravacao.ts",
     "painel:sincronizacao": "node scripts/painel-sincronizacao.mjs"
   },
   "dependencies": {
